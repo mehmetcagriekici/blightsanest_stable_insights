@@ -2,6 +2,8 @@
 
 ## Component Definition
 
+All information needs to be stringified before arriving to RAG
+
 RAG (Python) | Domain-agnostic retrieval and generation. 
 Reads pre-built vector indexes from the Database. 
 Receives queries and context from the API.
