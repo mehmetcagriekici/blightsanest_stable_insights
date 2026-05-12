@@ -4,6 +4,8 @@ import pickle
 from collections import Counter, defaultdict, OrderedDict
 from pathlib import Path
 
+from nltk import os
+
 from constants.constants import BM25_B, BM25_K1
 from helpers.helpers import tokenize
 from types.types import Document
@@ -89,6 +91,13 @@ class InvertedIndex:
             print(err)
         except OSError as err:
             print(err)
+    
+    # local development
+    # create or load inverted index
+    def create_or_load_inverted_index(self, documents: list[Document]):
+        if not os.path.exists(self.index_path):
+            self.build(documents)
+            self.save()
 
     # get the frequency of a single token
     def get_tf(self, doc_id: str, token: str) -> int:
