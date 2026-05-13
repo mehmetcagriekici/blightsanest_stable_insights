@@ -1,5 +1,5 @@
-import math
-from nltk.classify.textcat import re
+import re
+import json
 import numpy as np
 import nltk
 
@@ -7,8 +7,6 @@ from typing import cast
 
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
-
-from torch._prims_common import Tensor
 
 nltk.download('punkt_tab')
 nltk.download('stopwords')
@@ -19,16 +17,8 @@ def tokenize(text: str) -> list[str]:
     tokens = word_tokenize(text)
     return [w for w in tokens if w.lower() not in stop_words]
 
-# helper function to calc idf score
-def calc_idf(total_doc_count: int, term_match_doc_count: int) -> float:
-    return math.log((total_doc_count + 1) / (term_match_doc_count + 1))
-
-# helper function to calc tfidf score
-def calc_tf_idf(tf: float, idf: float) -> float:
-    return tf * idf
-
 # helper function to calculate cosine similarity
-def cosine_similarity(v1: Tensor, v2: Tensor) -> float:
+def cosine_similarity(v1, v2) -> float:
     dot_product: float = np.dot(v1, v2)
     norm1: float = cast(float, np.linalg.norm(v1))
     norm2: float = cast(float, np.linalg.norm(v2))
@@ -102,7 +92,9 @@ def semantic_chunk(text: str, size: int, overlap: int) -> list[str]:
 def calc_rrf_score(rank: int, k: int = 60) -> float:
     return 1 / (rank + k)
 
-
+# helper function to parse json strings into objects
+def parse_json(json_string: str):
+    return json.loads(json_string)
 
 
 

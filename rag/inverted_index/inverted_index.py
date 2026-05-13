@@ -4,9 +4,9 @@ import pickle
 from collections import Counter, defaultdict, OrderedDict
 from pathlib import Path
 
-from nltk import os
+import os
 
-from constants.constants import BM25_B, BM25_K1
+from constants.constants import BM25_B, BM25_K1, SEARCH_LIMIT
 from helpers.helpers import tokenize
 from types.types import Document
 
@@ -98,6 +98,8 @@ class InvertedIndex:
         if not os.path.exists(self.index_path):
             self.build(documents)
             self.save()
+        else:
+            self.load()
 
     # get the frequency of a single token
     def get_tf(self, doc_id: str, token: str) -> int:
@@ -133,7 +135,7 @@ class InvertedIndex:
         return idf * tf
 
     # implement the bm25 search algorithm
-    def bm25_search(self, query: str, limit: int=5):
+    def bm25_search(self, query: str, limit: int=SEARCH_LIMIT):
         # tokenize the query
         tokens = tokenize(query)
         scores = defaultdict(float)

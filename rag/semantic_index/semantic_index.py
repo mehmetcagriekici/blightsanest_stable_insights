@@ -1,8 +1,9 @@
 import os
 import numpy as np
+import json
 from pathlib import Path
 from sentence_transformers import SentenceTransformer
-from torch._prims_common import Tensor
+from constants.constants import SEARCH_LIMIT
 from helpers.helpers import cosine_similarity, semantic_chunk
 from types.types import Document
 
@@ -28,7 +29,7 @@ class SemanticIndex:
         return embeddings[0]
 
     # build embeddings for the documents
-    def build_chunk_embeddings(self, documents: list[Document]) -> Tensor:
+    def build_chunk_embeddings(self, documents: list[Document]):
         self.documents = documents
         # lists to keep chunks and chunk metedata
         chunks = []
@@ -65,13 +66,13 @@ class SemanticIndex:
         Path("./cache").mkdir(exist_ok=True)
         with self.chunk_embeddings_path.open(mode="wb") as f:
             np.save(f, self.chunk_embeddings)
-        with self.chunk_metadata_path.open(mode="wb") as f:
-            np.save(f, self.chunk_metadata)
+        with self.chunk_metadata_path.open(mode="w") as f:
+            json.dump(self.chunk_metadata, f)
 
         return self.chunk_embeddings
 
     # load or create chunk embeddings
-    def create_or_load_chunk_embeddings(self, documents: list[Document]) -> Tensor:
+    def create_or_load_chunk_embeddings(self, documents: list[Document]):
         self.documents = documents
         # iterate over the documents and create the docmap
         for i in range(len(self.documents)):
@@ -85,14 +86,14 @@ class SemanticIndex:
                 self.chunk_embeddings = np.load(f)
             # load metadata
             with self.chunk_metadata_path.open(mode="rb") as f:
-                self.chunk_metadata = np.load(f)
+                self.chunk_metadata = json.load(f)
             # return the chunk embeddings early
             return self.chunk_embeddings
         # otherwise build the embeddings
         return self.build_chunk_embeddings(documents)
 
     # semantic chunk search
-    def search_chunks(self, query: str, limit: int = 10):
+    def search_chunks(self, query: str, limit: int = SEARCH_LIMIT):
         # make sure chunk embeddings exists
         if self.chunk_embeddings is None:
             raise ValueError("chunk embedings is none")
@@ -108,8 +109,6 @@ class SemanticIndex:
         # generate an embedding from the query
         query_embedding = self.generate_embedding(query)
 
-        # chunk similarity scores with the query embeddings with metadata
-        chunk_scores = []
         # document similarity_scores
         document_scores = {}
         # iterate over the chunks
@@ -118,13 +117,6 @@ class SemanticIndex:
             similarity_score = cosine_similarity(query_embedding, self.chunk_embeddings[i])
             # get chunk metadata
             metadata = self.chunk_metadata[i]
-            # create a score struct using the score and the metadata
-            chunk_score = {
-                    "chunk_index": i,
-                    "document_index": metadata["document_index"],
-                    "score": similarity_score,
-                    }
-            chunk_scores.append(chunk_score)
             # if the document score does not exist create a new one
             if metadata["document_index"] not in document_scores:
                 document_scores[metadata["document_index"]] = similarity_score
