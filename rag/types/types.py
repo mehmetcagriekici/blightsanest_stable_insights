@@ -10,3 +10,11 @@ class RagResponse(BaseModel):
     id: str
     status: str
     response: str
+
+# default user
+class User(BaseModel):
+    id: str
+    aws_access_key_id: str
+    aws_secret_access_key: str
+    region: str
+    bucket_name: str
