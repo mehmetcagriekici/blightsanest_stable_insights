@@ -2,29 +2,26 @@ from constants.constants import SEARCH_LIMIT
 from helpers.helpers import calc_rrf_score
 from semantic_index.semantic_index import SemanticIndex
 from inverted_index.inverted_index import InvertedIndex
-from types.types import Document
+from types.types import Document, User
 
 # blightsanest main search engine
 class HybridSearch:
-    def __init__(self, documents: list[Document]) -> None:
+    def __init__(self, current_user: User, documents: list[Document]) -> None:
         # documents search will run on
         self.documents = documents
         # semantic index
-        self.semantic_index = SemanticIndex()
+        self.semantic_index = SemanticIndex(current_user)
         # inverted_index
-        self.inverted_index = InvertedIndex()
+        self.inverted_index = InvertedIndex(current_user)
         
         # local development
         # load the semantic_index
         self.semantic_index.create_or_load_chunk_embeddings(documents)
         # load the inverted index
-        self.inverted_index.create_or_load_inverted_index(documents)
+        self.inverted_index.load(documents)
 
     # bm25 search from inverted index
     def bm25_search(self, query: str, limit: int = SEARCH_LIMIT):
-        # local development only
-        # load the index
-        self.inverted_index.load()
         return self.inverted_index.bm25_search(query, limit)
 
     # semantic search from semantic index with chunking
@@ -64,6 +61,7 @@ class HybridSearch:
                 "semantic_rank": i + 1,
                 "rrf_score": rrf_score,
                 })
+
         # sort the rrf scores
         return sorted(rrf_scores, key=lambda score: score["rrf_score"], reverse=True)
 

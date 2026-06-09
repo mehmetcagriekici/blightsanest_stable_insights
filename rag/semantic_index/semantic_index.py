@@ -1,20 +1,23 @@
-import os
-import numpy as np
-import json
+from botocore.client import ClientError, logging
 from pathlib import Path
+from redis import ResponseError
 from sentence_transformers import SentenceTransformer
 from constants.constants import SEARCH_LIMIT
 from helpers.helpers import cosine_similarity, semantic_chunk
-from types.types import Document
+from storage.storage import Storage
+from types.types import Document, User
 
 # semantic indexing class with chunking
 class SemanticIndex:
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
+    def __init__(self, current_user: User, model_name: str = "all-MiniLM-L6-v2") -> None:
         self.model = SentenceTransformer(model_name)
         self.documents = None
         self.docmap = {}
         self.chunk_embeddings = None
         self.chunk_metadata = None
+
+        # storage for embeddings and metadata
+        self.storage = Storage(current_user)
 
         # for local development
         self.chunk_embeddings_path = Path("./cache/chunk_embeddings.npy")
@@ -61,13 +64,22 @@ class SemanticIndex:
         self.chunk_embeddings = self.model.encode(chunks)
         # assign chunk metadata
         self.chunk_metadata = chunk_metadata
-
-        # for local development
-        Path("./cache").mkdir(exist_ok=True)
-        with self.chunk_embeddings_path.open(mode="wb") as f:
-            np.save(f, self.chunk_embeddings)
-        with self.chunk_metadata_path.open(mode="w") as f:
-            json.dump(self.chunk_metadata, f)
+        
+        # upload chunk embedings and chunk metadata to the storage
+        try:
+            # chunk embeddings
+            self.storage.upload_data("chunk_embeddings", self.chunk_embeddings)
+            # metadata
+            self.storage.upload_data("chunk_metadata", self.chunk_metadata)
+        except ValueError as e:
+            logging.error(e, "a value error occured while trying to upload the semantic index")
+            return None
+        except ClientError as e:
+            logging.error(e, "a client error occured while trying to upload the semantic index")
+            return None
+        except ResponseError as e:
+            logging.error(e, "a response error occured while trying to upload the semantic index")
+            return None
 
         return self.chunk_embeddings
 
@@ -78,17 +90,14 @@ class SemanticIndex:
         for i in range(len(self.documents)):
             self.docmap[self.documents[i].id] = self.documents[i]
         
-        # for local development
-        # check if document embeddings are already built
-        if os.path.exists(self.chunk_embeddings_path) and os.path.exists(self.chunk_metadata_path):
-            # load embeddings
-            with self.chunk_embeddings_path.open(mode="rb") as f:
-                self.chunk_embeddings = np.load(f)
-            # load metadata
-            with self.chunk_metadata_path.open(mode="rb") as f:
-                self.chunk_metadata = json.load(f)
-            # return the chunk embeddings early
+        # check if chunk embeddings and chunk metadata is already built
+        chunk_embeddings = self.storage.load_data("chunk_embeddings")
+        chunk_metadata = self.storage.load_data("chunk_metadata")
+        if chunk_metadata and chunk_embeddings:
+            self.chunk_embeddings = chunk_embeddings
+            self.chunk_metadata = chunk_metadata
             return self.chunk_embeddings
+
         # otherwise build the embeddings
         return self.build_chunk_embeddings(documents)
 

@@ -1,4 +1,4 @@
-from botocore.client import ClientError
+from botocore.client import ClientError, logging
 import msgpack
 import redis
 import boto3
@@ -11,6 +11,7 @@ class Storage:
     def __init__(self, database_user: User, redis_host="localhost", redis_port=6379, redis_ttl=3600) -> None:
         self.redis_ttl = redis_ttl
         self.database_user: User = database_user
+        self.data_type = None
         
         # redis connection
         self.redis_connection = redis.Redis(host=redis_host, port=redis_port)
@@ -18,14 +19,21 @@ class Storage:
         # aws s3 client
         self.s3_client = boto3.client("s3")
         
-    # deserialize
+    # serialize and deserialize to help with type conversions
+    def serialize(self, data):
+        # convert data to list
+        # accepts list
+        return msgpack.packb(data)
+
     def deserialize_data(self, serialized_data):
+        # convert serialized data to previous type
+        # returns list
         return msgpack.unpackb(serialized_data)
 
     # upload data
     def upload_data(self, document_name, data):
         # serialize data
-        serialized_data = msgpack.packb(data)
+        serialized_data = self.serialize(data)
         if not serialized_data:
             raise ValueError("No serialized data to save")
 
@@ -51,4 +59,5 @@ class Storage:
                 content = response["Body"].read()
                 return self.deserialize_data(content)
             except ClientError as e:
-                raise ClientError(e, "aws object loading failed")
+                logging.error(e, "aws object loading failed")
+                return None

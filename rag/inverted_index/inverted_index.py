@@ -1,17 +1,18 @@
 import itertools
 import math
-import pickle
 from collections import Counter, defaultdict, OrderedDict
-from pathlib import Path
 
-import os
+
+from botocore.client import ClientError, logging
+from redis import ResponseError
 
 from constants.constants import BM25_B, BM25_K1, SEARCH_LIMIT
 from helpers.helpers import tokenize
-from types.types import Document
+from storage.storage import Storage
+from types.types import Document, User
 
 class InvertedIndex:
-    def __init__(self) -> None:
+    def __init__(self, current_user: User) -> None:
         # a dcitionary mapping tokens to set of document ids
         self.index: dict[str, set[str]] = {}
         # a dictionary mapping document ids to their full document objects
@@ -21,13 +22,10 @@ class InvertedIndex:
         # a dictionary mapping document ids to their lengths
         self.doc_lengths: dict[str, int] = {}
 
-        # for local and development - will be moved to AWS
-        self.index_path = Path("cache/index.pkl")
-        self.docmap_path = Path("cache/docmap.pkl")
-        self.term_frequencies_path = Path("cache/term_frequencies.pkl")
-        self.doc_lengths_path = Path("cache/doc_lengths.pkl") 
-
-    # tokenize document content (text), add each token to the index with the document id
+        # storage for indexes, docmap, term_frequencies, and document lengths
+        self.storage = Storage(current_user)
+ 
+ # tokenize document content (text), add each token to the index with the document id
     def add_document(self, text: str, doc_id: str) -> None:
         # tokenize the document content
         tokens = tokenize(text)
@@ -62,45 +60,36 @@ class InvertedIndex:
             self.docmap[doc.id] = doc
             self.add_document(doc.content, doc.id)
 
-    # save index, term frequencies, document lengths, and docmap to disk for local development
-    # save to AWS
+    # save to index, docmap, term frequencies, and doc lengths
     def save(self):
-        Path("./cache").mkdir(exist_ok=True)
-        with self.index_path.open(mode="wb") as f:
-            pickle.dump(self.index, f)
-        with self.docmap_path.open(mode="wb") as f:
-            pickle.dump(self.docmap, f)
-        with self.term_frequencies_path.open(mode="wb") as f:
-            pickle.dump(self.term_frequencies, f)
-        with self.doc_lengths_path.open(mode="wb") as f:
-            pickle.dump(self.doc_lengths, f)
-
-    # load index, term frequencies, document length, and ocmağ from the disk for local development
-    # load from the AWS
-    def load(self):
         try:
-            with self.index_path.open(mode="rb") as f:
-                self.index = pickle.load(f)
-            with self.docmap_path.open(mode="rb") as f:
-                self.docmap = pickle.load(f)
-            with self.term_frequencies_path.open(mode="rb") as f:
-                self.term_frequencies = pickle.load(f)
-            with self.doc_lengths_path.open(mode="rb") as f:
-                self.doc_lengths = pickle.load(f)
-        except ValueError as err:
-            print(err)
-        except OSError as err:
-            print(err)
-    
-    # local development
-    # create or load inverted index
-    def create_or_load_inverted_index(self, documents: list[Document]):
-        if not os.path.exists(self.index_path):
-            self.build(documents)
-            self.save()
-        else:
-            self.load()
+            self.storage.upload_data("inverted_index", self.index)
+            self.storage.upload_data("docmap", self.docmap)
+            self.storage.upload_data("term_frequencies", self.term_frequencies)
+            self.storage.upload_data("doc_lengths", self.doc_lengths)
+        except ValueError as e:
+            logging.error(e, "a value error occured while trying to save the inverted index")
+        except ClientError as e:
+            logging.error(e, "a client error occured while trying to save the inverted index")
+        except ResponseError as e:
+            logging.error(e, "a response error occured while trying to save the inverted index")
 
+    # load index, term frequencies, document length, and docmap
+    def load(self, documents: list[Document]):
+        index = self.storage.load_data("inverted_index")
+        docmap = self.storage.load_data("docmap")
+        tf = self.storage.load_data("term_frequencies")
+        doc_lengths = self.storage.load_data("doc_lengths")
+        
+        # if one of them is none build the index
+        if index is None or docmap is None or tf is None or doc_lengths is None:
+            self.build(documents)
+        else:
+            self.index = index
+            self.docmap = docmap
+            self.term_frequencies = tf
+            self.doc_lengths = doc_lengths
+        
     # get the frequency of a single token
     def get_tf(self, doc_id: str, token: str) -> int:
         # check if the document exists in the term frequencies
@@ -144,6 +133,7 @@ class InvertedIndex:
             if token in self.index:
                 for doc_id in self.index[token]:
                     scores[doc_id] += self.bm25(doc_id, token)
+
         return OrderedDict(itertools.islice(sorted(scores.items(), key=lambda kv: kv[1], reverse=True), limit))
 
 
