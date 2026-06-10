@@ -1,5 +1,4 @@
 import re
-import json
 import numpy as np
 import nltk
 
@@ -92,9 +91,16 @@ def semantic_chunk(text: str, size: int, overlap: int) -> list[str]:
 def calc_rrf_score(rank: int, k: int = 60) -> float:
     return 1 / (rank + k)
 
-# helper function to parse json strings into objects
-def parse_json(json_string: str):
-    return json.loads(json_string)
+# helper functions to serialize and deserialize defaultdicts for type conversion with factory handling
+
+
+
+
+
+
+
+
+
 
 
 

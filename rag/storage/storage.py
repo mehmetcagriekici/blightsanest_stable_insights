@@ -11,7 +11,6 @@ class Storage:
     def __init__(self, database_user: User, redis_host="localhost", redis_port=6379, redis_ttl=3600) -> None:
         self.redis_ttl = redis_ttl
         self.database_user: User = database_user
-        self.data_type = None
         
         # redis connection
         self.redis_connection = redis.Redis(host=redis_host, port=redis_port)
