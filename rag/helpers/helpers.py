@@ -1,7 +1,9 @@
+from collections import defaultdict
 import re
 import numpy as np
 import nltk
 
+from collections import Counter
 from typing import cast
 
 from nltk.corpus import stopwords
@@ -92,7 +94,24 @@ def calc_rrf_score(rank: int, k: int = 60) -> float:
     return 1 / (rank + k)
 
 # helper functions to serialize and deserialize defaultdicts for type conversion with factory handling
+def defaultdict_serializer(d: defaultdict):
+    factory = d.default_factory
+    factory_name = getattr(factory, "__name__", str(factory)) if factory else None
+    return {
+            "factory": factory_name,
+            "value": dict(d),
+            }
 
+def defaultdict_deserializer(data: dict):
+    factory_name = data.get("factory")
+    inner = data.get("value", {})
+    
+    # check for counter
+    if factory_name == "Counter":
+        return defaultdict(Counter, inner)
+
+    # default return
+    return defaultdict(dict, inner)
 
 
 

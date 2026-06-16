@@ -4,7 +4,8 @@ import redis
 import boto3
 from redis.exceptions import ResponseError
 
-from types.types import User
+from type_converter.type_converter import TypeConverter
+from types.types import User, Document
 
 # uploading and loading data to aws and redis
 class Storage:
@@ -17,17 +18,25 @@ class Storage:
 
         # aws s3 client
         self.s3_client = boto3.client("s3")
+
+        # type converter for packaging and unpackaging
+        self.type_converter = TypeConverter()
+        # register pydantic types
+        self.type_converter.register_pydantic_models(Document)
+        self.type_converter.register_pydantic_models(User)
         
     # serialize and deserialize to help with type conversions
     def serialize(self, data):
-        # convert data to list
+        # convert data to serialize format
+        serialized = self.type_converter.convert_to_serializable(data)
         # accepts list
-        return msgpack.packb(data)
+        return msgpack.packb(serialized)
 
     def deserialize_data(self, serialized_data):
-        # convert serialized data to previous type
-        # returns list
-        return msgpack.unpackb(serialized_data)
+        # unpack the serialized data
+        unpacked = msgpack.unpackb(serialized_data, raw=False)
+        # deserialize and return
+        return self.type_converter.convert_back_from_serialized(unpacked)
 
     # upload data
     def upload_data(self, document_name, data):
