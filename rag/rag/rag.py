@@ -2,7 +2,7 @@
 from typing import cast
 from helpers.helpers import parse_json
 from llm.ollama import llm_ollama
-from types.types import Document, RagResponse
+from custom_types.custom_types import Document, RagResponse
 
 
 class RAG:

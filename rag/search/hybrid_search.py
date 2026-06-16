@@ -2,7 +2,7 @@ from constants.constants import SEARCH_LIMIT
 from helpers.helpers import calc_rrf_score
 from semantic_index.semantic_index import SemanticIndex
 from inverted_index.inverted_index import InvertedIndex
-from types.types import Document, User
+from custom_types.custom_types import Document, User
 
 # blightsanest main search engine
 class HybridSearch:

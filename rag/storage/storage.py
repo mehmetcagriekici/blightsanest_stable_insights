@@ -1,10 +1,10 @@
-from botocore.client import ClientError, logging
+from botocore.exceptions import ClientError
 import redis
 import boto3
 from redis.exceptions import ResponseError
 
 from type_converter.type_converter import TypeConverter
-from types.types import User, Document
+from custom_types.custom_types import User, Document
 
 # uploading and loading data to aws and redis
 class Storage:
@@ -35,13 +35,13 @@ class Storage:
         try:
             self.s3_client.put_object(Bucket=self.database_user.bucket_name, Key=f"{self.database_user.id}/{document_name}", Body=serialized_data)
         except ClientError as e:
-            raise ClientError(e, operation_name="aws put object failed")
+            raise ClientError({"Error": e.response.get("Error", {})}, operation_name="aws put object failed") from e
 
         # save to redis if aws succeeds
         try:
             self.redis_connection.setex(name=f"{self.database_user.id}/{document_name}", time=self.redis_ttl, value=serialized_data)
         except redis.ResponseError as e:
-            raise ResponseError(e, "redis object upload failed")
+            raise ResponseError(e, "redis object upload failed") from e
 
     # load from redis or aws
     def load_data(self, document_name):
@@ -54,5 +54,5 @@ class Storage:
                 content = response["Body"].read()
                 return self.type_converter.deserialize(content)
             except ClientError as e:
-                logging.error(e, "aws object loading failed")
+                print(f"aws object loading failed: {e}")
                 return None

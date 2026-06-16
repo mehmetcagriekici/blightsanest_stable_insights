@@ -9,7 +9,7 @@ from redis import ResponseError
 from constants.constants import BM25_B, BM25_K1, SEARCH_LIMIT
 from helpers.helpers import tokenize
 from storage.storage import Storage
-from types.types import Document, User
+from custom_types.custom_types import Document, User
 
 class InvertedIndex:
     def __init__(self, current_user: User) -> None:

@@ -5,7 +5,7 @@ from sentence_transformers import SentenceTransformer
 from constants.constants import SEARCH_LIMIT
 from helpers.helpers import cosine_similarity, semantic_chunk
 from storage.storage import Storage
-from types.types import Document, User
+from custom_types.custom_types import Document, User
 
 # semantic indexing class with chunking
 class SemanticIndex:
