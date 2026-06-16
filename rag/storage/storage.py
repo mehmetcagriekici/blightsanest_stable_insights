@@ -1,5 +1,4 @@
 from botocore.client import ClientError, logging
-import msgpack
 import redis
 import boto3
 from redis.exceptions import ResponseError
@@ -25,23 +24,11 @@ class Storage:
         self.type_converter.register_pydantic_models(Document)
         self.type_converter.register_pydantic_models(User)
         
-    # serialize and deserialize to help with type conversions
-    def serialize(self, data):
-        # convert data to serialize format
-        serialized = self.type_converter.convert_to_serializable(data)
-        # accepts list
-        return msgpack.packb(serialized)
-
-    def deserialize_data(self, serialized_data):
-        # unpack the serialized data
-        unpacked = msgpack.unpackb(serialized_data, raw=False)
-        # deserialize and return
-        return self.type_converter.convert_back_from_serialized(unpacked)
 
     # upload data
     def upload_data(self, document_name, data):
         # serialize data
-        serialized_data = self.serialize(data)
+        serialized_data = self.type_converter.serialize(data)
         if not serialized_data:
             raise ValueError("No serialized data to save")
 
@@ -60,12 +47,12 @@ class Storage:
     def load_data(self, document_name):
         cached_data = self.redis_connection.get(f"{self.database_user.id}/{document_name}")
         if cached_data:
-            return self.deserialize_data(cached_data)
+            return self.type_converter.deserialize(cached_data)
         else:
             try:
                 response = self.s3_client.get_object(Bucket=self.database_user.bucket_name, Key=f"{self.database_user.id}/{document_name}")
                 content = response["Body"].read()
-                return self.deserialize_data(content)
+                return self.type_converter.deserialize(content)
             except ClientError as e:
                 logging.error(e, "aws object loading failed")
                 return None

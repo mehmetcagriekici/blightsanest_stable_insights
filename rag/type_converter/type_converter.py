@@ -1,7 +1,8 @@
 from typing import Any
+import msgpack
 import numpy as np
 from collections.abc import Callable
-from collections import Counter, OrderedDict
+from collections import Counter, OrderedDict, defaultdict
 
 from pydantic import BaseModel
 
@@ -19,11 +20,19 @@ class TypeConverter:
         # dict to hold types to their deserializers
         self.deserializers: dict[str, Callable] = {}
         # dict to hold pydantic models
-        self.pydantic_models: dict[str, type[BaseModel]]
+        self.pydantic_models: dict[str, type[BaseModel]] = {}
 
         # register handlers
         self.register_handlers()
        
+    # serialize data with msgpack
+    def serialize(self, data):
+        return msgpack.packb(self.convert_to_serializable(data))
+
+    # deserialize data with msgpack
+    def deserialize(self, data):
+        return self.convert_back_from_serialized(msgpack.unpackb(data, raw=False))
+
     # register types
     # register a type to their serializer and deserializer
     # handle pydantic models during the conversion recursion
@@ -69,7 +78,7 @@ class TypeConverter:
                     "shape": arr.shape,
                     "value": arr.tolist(),
                     },
-                lambda d: np.array(d["value"], dtype=d["dtype"].reshape(d["shape"])),
+                lambda d: np.array(d["value"], dtype=d["dtype"]).reshape(d["shape"]),
                 )
 
         # register defaultdicts
@@ -122,6 +131,13 @@ class TypeConverter:
                     "value": self.convert_to_serializable(self.serializers["ordereddict"](data)),
                     }
 
+        # defaultdict
+        if isinstance(data, defaultdict):
+            return {
+                    "__type__": "defaultdict",
+                    "value": self.convert_to_serializable(self.serializers["defaultdict"](data)),
+                    }
+
         # counters
         if isinstance(data, Counter):
             return {
@@ -133,7 +149,7 @@ class TypeConverter:
         if isinstance(data, np.ndarray):
             return {
                     "__type__": "numpy",
-                    **self.serializers["numpy"](data),
+                    "value": self.serializers["numpy"](data),
                     }
 
         # for nested dicts and list with complex types - list with sets etc. -
@@ -161,7 +177,7 @@ class TypeConverter:
                 v = data["value"]
                 # use deserializers
                 if t in self.deserializers:
-                    return self.deserializers[t](v)
+                    return self.deserializers[t](self.convert_back_from_serialized(v))
 
             return {k: self.convert_back_from_serialized(v) for k, v in data.items()}
 
