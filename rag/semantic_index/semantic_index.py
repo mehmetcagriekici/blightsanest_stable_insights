@@ -1,5 +1,4 @@
 from botocore.client import ClientError, logging
-from pathlib import Path
 from redis import ResponseError
 from sentence_transformers import SentenceTransformer
 from constants.constants import SEARCH_LIMIT
@@ -19,9 +18,6 @@ class SemanticIndex:
         # storage for embeddings and metadata
         self.storage = Storage(current_user)
 
-        # for local development
-        self.chunk_embeddings_path = Path("./cache/chunk_embeddings.npy")
-        self.chunk_metadata_path = Path("./cache/chunk_metadata.json")
 
     # generate an embedding using the model for a text
     def generate_embedding(self, text: str):

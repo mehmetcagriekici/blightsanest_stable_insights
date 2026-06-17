@@ -1,5 +1,6 @@
 from collections import defaultdict
 import re
+from botocore.credentials import json
 import numpy as np
 import nltk
 
@@ -11,6 +12,10 @@ from nltk.tokenize import word_tokenize
 
 nltk.download('punkt_tab')
 nltk.download('stopwords')
+
+# parse json
+def parse_json(data):
+    return json.load(data)
 
 # helper function to tokenize a string
 def tokenize(text: str) -> list[str]:
