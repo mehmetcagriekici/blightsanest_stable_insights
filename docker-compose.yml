@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: blightsanest_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: blightsanest_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: blightsanest_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # RAG Service (Python)
+  # TODO: Uncomment when RAG service is ready with Dockerfile
+  # rag:
+  #   build:
+  #     context: ./rag
+  #     dockerfile: Dockerfile
+  #   container_name: blightsanest_rag
+  #   ports:
+  #     - "50051:50051"  # gRPC port
+  #   environment:
+  #     REDIS_HOST: redis
+  #     REDIS_PORT: 6379
+  #     DB_URL: postgresql://postgres:password@postgres:5432/blightsanest_dev
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   volumes:
+  #     - ./rag:/app
+
+  # API Service (Go)
+  # TODO: Uncomment when API service is ready with Dockerfile
+  # api:
+  #   build:
+  #     context: ./api
+  #     dockerfile: Dockerfile
+  #   container_name: blightsanest_api
+  #   ports:
+  #     - "8080:8080"  # HTTP port
+  #   environment:
+  #     DB_URL: postgresql://postgres:password@postgres:5432/blightsanest_dev
+  #     RAG_SERVICE_HOST: rag
+  #     RAG_SERVICE_PORT: 50051
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   volumes:
+  #     - ./api:/app
+
+  # PubSub Service (Go)
+  # TODO: Uncomment when PubSub service is ready with Dockerfile
+  # pubsub:
+  #   build:
+  #     context: ./pubsub
+  #     dockerfile: Dockerfile
+  #   container_name: blightsanest_pubsub
+  #   ports:
+  #     - "50052:50052"  # gRPC port
+  #   environment:
+  #     DB_URL: postgresql://postgres:password@postgres:5432/blightsanest_dev
+  #     REDIS_HOST: redis
+  #     REDIS_PORT: 6379
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   volumes:
+  #     - ./pubsub:/app
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    name: blightsanest_network
