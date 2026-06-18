@@ -1,4 +1,3 @@
-import pytest
 import json
 from moto import mock_aws
 import boto3
@@ -10,8 +9,7 @@ class TestRagEnd2End:
     """Test entire RAG system working together"""
 
     @mock_aws
-    @pytest.mark.asyncio
-    async def test_full_pipeline(self, mock_user, mock_documents, redis_connection):
+    async def test_full_pipeline(self, mock_user, mock_documents):
         """
         Full e2e flow:
         1. Create indexes with documents
