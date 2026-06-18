@@ -139,33 +139,3 @@ class TestLoadData:
         # get the result from the storage, must be none
         result = storage.load_data("doc.pkl")
         assert result is None
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

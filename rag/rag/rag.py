@@ -1,7 +1,7 @@
 # blightsanest RAG
+from collections.abc import Awaitable, Callable
 from typing import cast
 from helpers.helpers import parse_json
-from llm.ollama import llm_ollama
 from custom_types.custom_types import Document, RagResponse
 
 
@@ -42,9 +42,12 @@ class RAG:
     Answer the query using only the documents above.
     """
 
+    def __init__(self, generate: Callable[[str, str], Awaitable[str]]) -> None:
+        self.generate = generate
+
     async def rag(self, query: str, retrieved_documents: list[Document]) -> RagResponse:
         user_prompt = self.USER_PROMPT_TEMPLATE.format(query=query, retrieved_documents=retrieved_documents)
-        response = await llm_ollama(user_prompt, self.SYSTEM_PROMPT)
+        response = await self.generate(user_prompt, self.SYSTEM_PROMPT)
         if response is None:
             raise ValueError("llm did not produce any response")
 
