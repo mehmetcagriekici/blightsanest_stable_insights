@@ -33,6 +33,22 @@ services:
       timeout: 5s
       retries: 5
 
+  # Ollama LLM (local development)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: blightsanest_ollama
+    ports:
+      - "11434:11434"
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # RAG Service (Python)
   # TODO: Uncomment when RAG service is ready with Dockerfile
   # rag:
@@ -97,6 +113,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  ollama_data:
 
 networks:
   default:
