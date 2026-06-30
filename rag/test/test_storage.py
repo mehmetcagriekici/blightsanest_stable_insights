@@ -53,10 +53,10 @@ class TestUploadData:
                 )
 
         # test redis
-        storage.redis_connection.setex.assert_called_once_with(
+        storage.redis_connection.set.assert_called_once_with(
                 name="user1/doc.pkl",
-                time=storage.redis_ttl,
                 value=b"serialized",
+                ex=storage.redis_ttl,
                 )
 
     # test empty serialization
@@ -89,8 +89,8 @@ class TestUploadData:
         # s3 write succeeds
         storage.s3_client.put_object.return_value = None
 
-        # redis raises on setex
-        storage.redis_connection.setex.side_effect = ResponseError(
+        # redis raises on set
+        storage.redis_connection.set.side_effect = ResponseError(
                 "redis failure"
                 )
         # should not raise - s3 (source of truth) already succeeded

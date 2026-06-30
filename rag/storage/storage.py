@@ -41,7 +41,7 @@ class Storage:
         # redis failure (connection down, timeout, etc.) must not fail the
         # upload now that s3 (the source of truth) has already succeeded
         try:
-            self.redis_connection.setex(name=f"{self.database_user.id}/{document_name}", time=self.redis_ttl, value=serialized_data)
+            self.redis_connection.set(name=f"{self.database_user.id}/{document_name}", value=serialized_data, ex=self.redis_ttl)
         except redis.exceptions.RedisError as e:
             logging.error("redis object upload failed; continuing with s3 only: %s", e)
 
