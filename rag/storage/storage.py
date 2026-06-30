@@ -54,7 +54,7 @@ class Storage:
             logging.error("redis object loading failed; falling back to s3: %s", e)
             cached_data = None
 
-        if cached_data:
+        if cached_data is not None:
             return self.type_converter.deserialize(cached_data)
         else:
             try:

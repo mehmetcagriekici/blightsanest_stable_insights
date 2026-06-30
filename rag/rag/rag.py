@@ -1,4 +1,5 @@
 # blightsanest RAG
+import json
 from collections.abc import Awaitable, Callable
 from helpers.helpers import parse_json
 from custom_types.custom_types import Document, RagResponse
@@ -55,7 +56,10 @@ class RAG:
         if response is None:
             raise ValueError("llm did not produce any response")
 
-        data = parse_json(response)
+        try:
+            data = parse_json(response)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"LLM returned non-JSON response: {e}") from e
         if "status" not in data or "response" not in data:
             raise ValueError("invalid llm response")
 

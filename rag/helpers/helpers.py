@@ -21,7 +21,7 @@ def parse_json(data):
 def tokenize(text: str) -> list[str]:
     stop_words = set(stopwords.words("english"))
     tokens = word_tokenize(text)
-    return [w for w in tokens if w.lower() not in stop_words]
+    return [w.lower() for w in tokens if w.lower() not in stop_words]
 
 # helper function to calculate cosine similarity
 def cosine_similarity(v1, v2) -> float:

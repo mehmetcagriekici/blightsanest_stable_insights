@@ -68,11 +68,11 @@ class InvertedIndex:
             self.storage.upload_data("term_frequencies", self.term_frequencies)
             self.storage.upload_data("doc_lengths", self.doc_lengths)
         except ValueError as e:
-            logging.error(e, "a value error occured while trying to save the inverted index")
+            logging.error("a value error occured while trying to save the inverted index: %s", e)
         except ClientError as e:
-            logging.error(e, "a client error occured while trying to save the inverted index")
+            logging.error("a client error occured while trying to save the inverted index: %s", e)
         except ResponseError as e:
-            logging.error(e, "a response error occured while trying to save the inverted index")
+            logging.error("a response error occured while trying to save the inverted index: %s", e)
 
     # load index, term frequencies, document length, and docmap
     def load(self, documents: list[Document]):
@@ -84,6 +84,7 @@ class InvertedIndex:
         # if one of them is none build the index
         if index is None or docmap is None or tf is None or doc_lengths is None:
             self.build(documents)
+            self.save()
         else:
             self.index = index
             self.docmap = docmap

@@ -108,47 +108,47 @@ class TypeConverter:
             name = data.__class__.__name__
             # value pydantic models initiated at the storage __init__
             content = self.serializers[name](data) if name in self.serializers else data.model_dump()
-            return {"__type__": name, "value": self.convert_to_serializable(content)}
+            return {"__blightsanest_type__": name, "value": self.convert_to_serializable(content)}
         
         # sets
         if isinstance(data, set):
             return {
-                    "__type__": "set", 
+                    "__blightsanest_type__": "set", 
                     "value": self.convert_to_serializable(self.serializers["set"](data)),
                     }
 
         # tuples
         if isinstance(data, tuple):
             return {
-                    "__type__": "tuple",
+                    "__blightsanest_type__": "tuple",
                     "value": self.convert_to_serializable(self.serializers["tuple"](data)),
                     }
 
         # ordereddicts
         if isinstance(data, OrderedDict):
             return {
-                    "__type__": "ordereddict",
+                    "__blightsanest_type__": "ordereddict",
                     "value": self.convert_to_serializable(self.serializers["ordereddict"](data)),
                     }
 
         # defaultdict
         if isinstance(data, defaultdict):
             return {
-                    "__type__": "defaultdict",
+                    "__blightsanest_type__": "defaultdict",
                     "value": self.convert_to_serializable(self.serializers["defaultdict"](data)),
                     }
 
         # counters
         if isinstance(data, Counter):
             return {
-                    "__type__": "counter",
+                    "__blightsanest_type__": "counter",
                     "value": self.convert_to_serializable(self.serializers["counter"](data)),
                     }
 
         # numpy arrays
         if isinstance(data, np.ndarray):
             return {
-                    "__type__": "numpy",
+                    "__blightsanest_type__": "numpy",
                     "value": self.serializers["numpy"](data),
                     }
 
@@ -172,8 +172,8 @@ class TypeConverter:
         # for dicts
         if isinstance(data, dict):
             # check for __type___ created during serialization
-            if "__type__" in data:
-                t = data["__type__"]
+            if "__blightsanest_type__" in data:
+                t = data["__blightsanest_type__"]
                 v = data["value"]
                 # use deserializers
                 if t in self.deserializers:

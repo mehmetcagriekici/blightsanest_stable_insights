@@ -68,13 +68,13 @@ class SemanticIndex:
             # metadata
             self.storage.upload_data("chunk_metadata", self.chunk_metadata)
         except ValueError as e:
-            logging.error(e, "a value error occured while trying to upload the semantic index")
+            logging.error("a value error occured while trying to upload the semantic index: %s", e)
             return None
         except ClientError as e:
-            logging.error(e, "a client error occured while trying to upload the semantic index")
+            logging.error("a client error occured while trying to upload the semantic index: %s", e)
             return None
         except ResponseError as e:
-            logging.error(e, "a response error occured while trying to upload the semantic index")
+            logging.error("a response error occured while trying to upload the semantic index: %s", e)
             return None
 
         return self.chunk_embeddings
