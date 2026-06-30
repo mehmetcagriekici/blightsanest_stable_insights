@@ -1,6 +1,5 @@
 # blightsanest RAG
 from collections.abc import Awaitable, Callable
-from typing import cast
 from helpers.helpers import parse_json
 from custom_types.custom_types import Document, RagResponse
 
@@ -28,7 +27,7 @@ class RAG:
     Respond only in JSON format:
         {
             "status": "found" | "not found",
-            "response": "your answer here",
+            "response": "your answer here"
         }
     No extra text, no markdown, no backticks.
     """
@@ -46,7 +45,12 @@ class RAG:
         self.generate = generate
 
     async def rag(self, query: str, retrieved_documents: list[Document]) -> RagResponse:
-        user_prompt = self.USER_PROMPT_TEMPLATE.format(query=query, retrieved_documents=retrieved_documents)
+        # format documents as readable, citable text instead of leaking the
+        # pydantic list repr into the prompt
+        formatted_documents = "\n\n".join(
+            f"[{document.id}] {document.content}" for document in retrieved_documents
+        )
+        user_prompt = self.USER_PROMPT_TEMPLATE.format(query=query, retrieved_documents=formatted_documents)
         response = await self.generate(user_prompt, self.SYSTEM_PROMPT)
         if response is None:
             raise ValueError("llm did not produce any response")
@@ -55,7 +59,7 @@ class RAG:
         if "status" not in data or "response" not in data:
             raise ValueError("invalid llm response")
 
-        return cast(RagResponse, data)
+        return RagResponse(**data)
 
 
     

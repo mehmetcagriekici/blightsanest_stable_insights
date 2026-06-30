@@ -82,18 +82,20 @@ class TestUploadData:
         # after s3 failure redis must not be called
         storage.redis_connection.setex.assert_not_called()
 
-    # test for redis failure
-    def test_upload_redis_failure(self, storage):
+    # redis is an optional cache: a redis failure after a successful s3 write
+    # must not fail the upload
+    def test_upload_redis_failure_is_non_fatal(self, storage):
         storage.type_converter.serialize.return_value = b"serialized"
-        # redis returns none
+        # s3 write succeeds
         storage.s3_client.put_object.return_value = None
 
-        # init redis error
+        # redis raises on setex
         storage.redis_connection.setex.side_effect = ResponseError(
                 "redis failure"
                 )
-        with pytest.raises(ResponseError):
-            storage.upload_data("doc.pkl", {"a": 1})
+        # should not raise - s3 (source of truth) already succeeded
+        storage.upload_data("doc.pkl", {"a": 1})
+        storage.s3_client.put_object.assert_called_once()
 
 # test while loading data
 class TestLoadData:

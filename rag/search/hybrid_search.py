@@ -43,22 +43,45 @@ class HybridSearch:
         semantic_results = self.semantic_search(query, limit)
         # sort semantic results
         semantic_results = sorted(semantic_results, key=lambda score: score["score"], reverse=True)
+        # from semantic scores create ranks and keep a lookup for content/metadata
+        semantic_ranks = {}
+        semantic_by_id = {}
+        for i in range(len(semantic_results)):
+            semantic_ranks[semantic_results[i]["id"]] = i + 1
+            semantic_by_id[semantic_results[i]["id"]] = semantic_results[i]
+
+        # fuse over the union of both result sets so a document ranked highly
+        # by only one method is not silently dropped
+        doc_ids = set(bm25_ranks) | set(semantic_ranks)
 
         # calculate rrf scores
         rrf_scores = []
-        for i in range(len(semantic_results)):
-            rrf_score = calc_rrf_score(i + 1)
+        for doc_id in doc_ids:
+            rrf_score = 0.0
+            semantic_rank = 0
             bm25_rank = 0
-            if semantic_results[i]["id"] in bm25_ranks:
-                rrf_score += calc_rrf_score(bm25_ranks[semantic_results[i]["id"]])
-                bm25_rank = bm25_ranks[semantic_results[i]["id"]]
+
+            if doc_id in semantic_ranks:
+                semantic_rank = semantic_ranks[doc_id]
+                rrf_score += calc_rrf_score(semantic_rank)
+            if doc_id in bm25_ranks:
+                bm25_rank = bm25_ranks[doc_id]
+                rrf_score += calc_rrf_score(bm25_rank)
+
+            # resolve content from whichever source has it (semantic results
+            # carry content; bm25-only docs come from the docmap)
+            if doc_id in semantic_by_id:
+                content = semantic_by_id[doc_id]["content"]
+            else:
+                document = self.inverted_index.docmap.get(doc_id)
+                content = document.content if document is not None else ""
 
             # create the rrf score object and append it to the scores
             rrf_scores.append({
-                "doc_id": semantic_results[i]["id"],
-                "content": semantic_results[i]["content"],
+                "doc_id": doc_id,
+                "content": content,
                 "bm25_rank": bm25_rank,
-                "semantic_rank": i + 1,
+                "semantic_rank": semantic_rank,
                 "rrf_score": rrf_score,
                 })
 

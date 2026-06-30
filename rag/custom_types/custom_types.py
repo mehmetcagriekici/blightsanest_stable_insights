@@ -7,7 +7,9 @@ class Document(BaseModel):
 
 # RAG response
 class RagResponse(BaseModel):
-    id: str
+    # the LLM only returns status + response; id is optional and may be
+    # populated server-side when a response needs to be tied to a record
+    id: str | None = None
     status: str
     response: str
 

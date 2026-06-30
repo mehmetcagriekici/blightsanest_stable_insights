@@ -51,7 +51,7 @@ class SemanticIndex:
                 metadata = {
                         "document_index": i,
                         "chunk_index": j,
-                        "total_chunks": len(chunks),
+                        "total_chunks": len(curr_chunks),
                         }
                 # add chunk metadata to chunk metadata
                 chunk_metadata.append(metadata)
@@ -89,7 +89,9 @@ class SemanticIndex:
         # check if chunk embeddings and chunk metadata is already built
         chunk_embeddings = self.storage.load_data("chunk_embeddings")
         chunk_metadata = self.storage.load_data("chunk_metadata")
-        if chunk_metadata and chunk_embeddings:
+        # use explicit None checks: chunk_embeddings is a numpy array and
+        # evaluating it in a boolean context raises ValueError
+        if chunk_metadata is not None and chunk_embeddings is not None:
             self.chunk_embeddings = chunk_embeddings
             self.chunk_metadata = chunk_metadata
             return self.chunk_embeddings

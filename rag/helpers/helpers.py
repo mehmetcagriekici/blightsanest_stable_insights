@@ -1,6 +1,6 @@
 from collections import defaultdict
+import json
 import re
-from botocore.credentials import json
 import numpy as np
 import nltk
 
@@ -15,7 +15,7 @@ nltk.download('stopwords')
 
 # parse json
 def parse_json(data):
-    return json.load(data)
+    return json.loads(data)
 
 # helper function to tokenize a string
 def tokenize(text: str) -> list[str]:
@@ -63,12 +63,10 @@ def base_chunk(words: list[str], chunk_size: int, overlap: int) -> list[str]:
             chunk = " ".join(words[left_index:right_index])
             chunk = chunk.strip()
 
-            # if the chunk is empty move to the next iteration
-            if chunk == "":
-                continue
-
-            # otherwise push it to the chunks
-            chunks.append(chunk)
+            # only push non-empty chunks, but always advance the window
+            # so an empty chunk cannot stall the loop
+            if chunk != "":
+                chunks.append(chunk)
 
             # assign left index to write index for the next iteration
             left_index = right_index

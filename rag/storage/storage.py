@@ -1,7 +1,7 @@
+from botocore.client import logging
 from botocore.exceptions import ClientError
 import redis
 import boto3
-from redis.exceptions import ResponseError
 
 from type_converter.type_converter import TypeConverter
 from custom_types.custom_types import User, Document
@@ -37,15 +37,23 @@ class Storage:
         except ClientError as e:
             raise ClientError({"Error": e.response.get("Error", {})}, operation_name="aws put object failed") from e
 
-        # save to redis if aws succeeds
+        # save to redis if aws succeeds - redis is an optional cache, so a
+        # redis failure (connection down, timeout, etc.) must not fail the
+        # upload now that s3 (the source of truth) has already succeeded
         try:
             self.redis_connection.setex(name=f"{self.database_user.id}/{document_name}", time=self.redis_ttl, value=serialized_data)
-        except redis.ResponseError as e:
-            raise ResponseError(e, "redis object upload failed") from e
+        except redis.exceptions.RedisError as e:
+            logging.error("redis object upload failed; continuing with s3 only: %s", e)
 
     # load from redis or aws
     def load_data(self, document_name):
-        cached_data = self.redis_connection.get(f"{self.database_user.id}/{document_name}")
+        # redis is an optional cache; if it is unreachable fall back to s3
+        try:
+            cached_data = self.redis_connection.get(f"{self.database_user.id}/{document_name}")
+        except redis.exceptions.RedisError as e:
+            logging.error("redis object loading failed; falling back to s3: %s", e)
+            cached_data = None
+
         if cached_data:
             return self.type_converter.deserialize(cached_data)
         else:
