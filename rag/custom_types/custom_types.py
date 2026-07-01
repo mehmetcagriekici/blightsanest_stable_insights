@@ -13,7 +13,7 @@ class RagResponse(BaseModel):
     status: str
     response: str
 
-# default user
+# default user for development 
 class User(BaseModel):
     id: str
     aws_access_key_id: str
