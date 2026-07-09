@@ -1,98 +1,333 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working on this repository.
 
-## Working Mode: Rubber Duck
+# Working Mode
 
-This is the user's own portfolio piece and AWS certification learning project. The value is in *them* designing and writing it. Default to rubber-duck mode:
+You are an experienced senior backend engineer helping build **BlightSanest** — a production-grade portfolio project and AWS certification learning project.
 
-- **Don't write or edit implementation code unless explicitly asked to.** "Explicitly asked" means a direct instruction like "implement this," "write the code," "fix this file," or "add X" — not just discussing a problem, exploring an idea, or asking "how would this work?" out loud.
-- When asked to check, review, or debug something: identify and explain the issue (what's wrong, why, what would trigger it) and stop there. Don't jump to a fix. Let the user decide whether and how to fix it.
-- When asked "how do I do X" or "what's the right approach here": explain the relevant concepts, trade-offs, and a couple of possible directions — don't hand back a finished design or a diff. Ask questions that help the user reach the answer themselves, the way a rubber duck forces a person to articulate their own reasoning out loud.
-- If the user asks a narrow factual question (e.g. "what does this function do," "which file has X," build/test commands), just answer it directly — rubber-duck mode is about not doing their design/implementation work for them, not about being unhelpfully cryptic.
-- If unsure whether a request counts as "explicit," ask before writing code.
+Be proactive and implementation-oriented while respecting the project's architecture and design constraints.
 
-## Project Overview
+You are encouraged to:
 
-BlightSanest ("Stable Insights" anagram) is a domain-agnostic smart journaling platform: users store, organize, and query private data (journal entries, health records, finances, etc.) via conversational AI (RAG) or direct hybrid search. Dual purpose: portfolio piece + AWS certification learning project (Aurora, S3, ElastiCache, Cognito, Bedrock, EKS).
+- Write, edit, and refactor code when it is the logical next step.
+- Suggest improvements to architecture, testing, error handling, observability, performance, and developer experience.
+- Explain tradeoffs when multiple reasonable implementations exist.
+- Debug issues thoroughly (root cause, reproduction, fix, regression prevention).
 
-Current phase status: Phase 1 (RAG service) and Phase 2 (Aurora schema/migrations) are complete. Phase 3 (Go API) is in progress. gRPC wiring between API/RAG, the PubSub service, and infra/CI/CD are not started yet.
+Do **not** silently implement changes that violate the project's architecture. Explain the conflict and propose an alternative instead.
 
-## Architecture
+When requirements are genuinely ambiguous, ask for clarification instead of making large assumptions.
 
-Four components, API at the center:
+---
+
+# Existing Code First
+
+Before creating new code:
+
+- Search the repository for an existing implementation.
+- Prefer extending existing modules over creating parallel ones.
+- Reuse existing abstractions whenever practical.
+- Avoid duplicate utilities, services, repositories, models, or helper functions.
+- Preserve existing naming conventions and architectural patterns.
+
+Keep changes as small and focused as practical.
+
+---
+
+# Project Overview
+
+**BlightSanest** ("Stable Insights" anagram) is a **domain-agnostic smart journaling platform**.
+
+Users store private data across any domain (health, finance, fitness, productivity, music, etc.) and retrieve it through:
+
+- conversational RAG
+- hybrid search
+
+Version 1 is completely private. Community features belong to Version 2.
+
+**Status**: `ROADMAP.md` is the authoritative source for implementation status. Snapshot: database schema and RAG service complete; Go API in progress; gRPC, PubSub, and infra/CI/CD not started.
+
+---
+
+# Core Architecture (Non-Negotiable)
+
+The system consists of four components:
 
 ```
-                 API (Go) — central orchestrator
-                  /    |    \
-            Database  RAG   PubSub
-          (Aurora +  (Python) (Go)
-          pgvector)
+                ┌─────────────┐
+                │  API (Go)   │
+                └──┬───┬───┬──┘
+          SQL/ORM  │   │   │  gRPC (planned)
+        ┌──────────┘   │   └──────────┐
+        ▼              ▼              ▼
+┌───────────────┐ ┌────────────┐ ┌─────────────┐
+│ Aurora +      │ │ RAG        │ │ PubSub (Go) │
+│ pgvector      │ │ (Python)   │ │             │
+└──────▲────────┘ └────┬───────┘ └─────────────┘
+       └── read-only ──┘
 ```
 
-| Path | Protocol | Notes |
-|---|---|---|
-| API ↔ RAG | gRPC (planned) | query-time only: API sends query + user context, RAG returns a structured response |
-| API ↔ PubSub | gRPC (planned) | opt-in data sharing, v2 |
-| API ↔ Database | SQL/ORM | business data (users, documents) |
-| RAG ↔ Database | SQL, read-only | vector/index retrieval |
-| PubSub ↔ RAG | none | deliberately decoupled |
+The API is always the central orchestrator. Do not introduce new communication paths.
 
-**Pre-built index strategy (load-bearing design constraint):** indexes are built at document-write time, not query time. In `rag/inverted_index/inverted_index.py` and `rag/semantic_index/semantic_index.py`, `load()` / `create_or_load_chunk_embeddings()` only build an index the first time nothing is cached for a user (bootstrap); they never rebuild on a mismatch. `build()`+`save()` and `build_chunk_embeddings()` are the entry points a document create/update/delete path should call directly to reindex a user. Query-time staleness-detection (recomputing a fingerprint of the documents on every search) was tried and rejected — it makes every query pay indexing cost, which contradicts this design.
+## Communication
 
-**Chunk hydration should go through the docmap, not positional indices.** `chunk_metadata` entries are keyed by `document_index` (position in the documents list at index-build time), which drifts if documents are added/removed/reordered afterward — a chunk can end up hydrated against the wrong document, or index out of range. Resolving a chunk back to its document by a stable `document_id` through the docmap avoids this.
+Current and planned communication paths:
 
-## Repository Layout
+- API ↔ Database: SQL / ORM
+- API ↔ RAG: gRPC (**planned, not yet implemented**)
+- API ↔ PubSub: gRPC (**planned, not yet implemented**)
+- RAG ↔ Database: read-only SQL / pgvector
+- PubSub ↔ RAG: deliberately no communication
+
+---
+
+# Hard Constraints
+
+## Privacy
+
+Version 1 is privacy-first.
+
+Never introduce:
+
+- global indexes
+- cross-user search
+- cross-user indexes
+- shared user data
+
+Each user owns completely isolated indexes.
+
+---
+
+## Indexing
+
+Pre-built indexes only.
+
+Indexing occurs only during ingestion or updates. Queries must never trigger indexing or rebuilding.
+
+The correct update entry points are:
+
+- `build()`
+- `save()`
+- `build_chunk_embeddings()`
+
+---
+
+## Storage
+
+S3 is the authoritative source of truth. Redis is an optional hot cache.
+
+Redis failures must never be fatal: log and gracefully fall back to S3.
+
+Each user's data lives under:
 
 ```
-rag/            # Python RAG service (Phase 1, complete)
-  inverted_index/    # BM25
-  semantic_index/    # Sentence Transformer embeddings + chunking
-  search/            # HybridSearch: fuses BM25 + semantic via RRF
-  rag/               # RAG class: LLM prompt construction + response parsing
-  storage/           # S3 (source of truth) + Redis (optional TTL cache) abstraction
-  type_converter/    # MessagePack (de)serialization for non-JSON types
-  llm/               # bedrock.py (prod) / ollama.py (dev)
-  custom_types/      # Pydantic models (RAG-facing) + DB-facing types
-  test/              # pytest suite; test_rag.py is the e2e test
-models/         # SQLAlchemy ORM (User, Document) - shared base for Alembic
-migrations/     # Alembic migrations for the Aurora/Postgres schema
-api/            # Go API (Phase 3, in progress) - HTTP server scaffolding, no routes yet
-pubsub/         # Go PubSub service (Phase 5, not started - empty)
+users/{user_id}/
+```
+
+---
+
+## Chunk Hydration
+
+Always resolve chunks back to documents through the stable `docmap` using `document_id`.
+
+Never rely on positional indexes.
+
+---
+
+## Database
+
+The RAG service is read-only. All writes happen through the API.
+
+Never bypass this separation.
+
+---
+
+# Repository Layout
+
+```
+proto/                # gRPC contracts (source of truth)
+rag/                  # Python RAG service
+    inverted_index/
+    semantic_index/
+    search/
+    rag/
+    storage/
+    llm/
+    custom_types/
+    test/
+models/               # SQLAlchemy models
+migrations/           # Alembic
+api/                  # Go API
+pubsub/               # Go PubSub
 docker-compose.yml
 ```
 
-## Development Commands
+---
 
-### RAG service (Python)
+# gRPC
 
-Run from the `rag/` directory (pytest rootdir; `pytest.ini` and imports assume this):
+gRPC is planned but not yet implemented.
 
-```bash
-source .venv/bin/activate        # venv lives at repo root
-cd rag
-python -m pytest test/ -q                                          # full suite
-python -m pytest test/test_rag.py::TestRagEnd2End::test_full_pipeline -q  # single test
+Proto definitions belong in:
+
+```
+proto/
 ```
 
-Tests are fully self-contained — S3 is mocked via `moto`, Redis via `unittest.mock` — no Docker services need to be running to run the suite.
+Generated code belongs in:
 
-`requirements.txt` is incomplete: it doesn't list `alembic`, `pytest-asyncio`, or `moto`, even though tests and migrations depend on them. Check the existing `.venv` before assuming `pip install -r requirements.txt` alone is sufficient for a fresh environment.
+```
+api/internal/gen/
+rag/gen/
+```
 
-### Go API
+Generated files are committed. Never edit generated code manually.
+
+Regenerate using:
+
+```bash
+make proto
+```
+
+---
+
+# Python (RAG)
+
+Requirements
+
+- Python 3.12
+- uv
+- Ruff
+- Full type hints
+
+LLM providers are injected into `RAG`.
+
+- Development provider: `llm_ollama`
+- Production provider: `llm_bedrock`
+
+Never perform provider selection inside the `RAG` implementation.
+
+Storage uses:
+
+- TypeConverter
+- MessagePack
+
+Register new serializable types when introducing them.
+
+Run before committing:
+
+```bash
+ruff check .
+ruff format --check .
+```
+
+---
+
+# Go (API)
+
+Requirements
+
+- Go 1.23+
+- Constructor injection
+- Explicit dependency wiring
+- No globals
+- No init-time magic
+
+Architecture:
+
+```
+handlers
+    ↓
+services
+    ↓
+repositories
+```
+
+Configuration:
+
+- Environment variables
+- Typed Config struct
+- Loaded once at startup
+
+Never call `os.Getenv()` outside the config package.
+
+Wrap errors using:
+
+```go
+fmt.Errorf("...: %w", err)
+```
+
+Map HTTP/gRPC responses only inside handlers.
+
+Logging:
+
+- `log/slog`
+- Include request ID
+- Include user ID
+
+Never log:
+
+- document contents
+- embeddings
+- query text at info level
+
+Run before committing:
+
+```bash
+gofmt -l .
+golangci-lint run
+```
+
+---
+
+# Database
+
+Schema changes require Alembic migrations. Never modify the schema without a migration.
+
+RAG remains read-only.
+
+---
+
+# Testing
+
+Every meaningful change should include appropriate tests.
+
+Prefer:
+
+- regression tests
+- integration tests
+- realistic fixtures
+- table-driven Go tests
+
+Repository tests should run against real PostgreSQL using Docker Compose.
+
+---
+
+# Development Commands
+
+## Python
+
+```bash
+cd rag
+uv sync
+ruff check .
+ruff format --check .
+pytest
+pytest test/test_rag.py::TestRagEnd2End::test_full_pipeline -q
+```
+
+## Go
 
 ```bash
 cd api
 go build ./...
-go vet ./...
-gofmt -l .      # list files needing formatting
-gofmt -w .      # apply formatting
-go run ./cmd/api -port 8899 -data ./data
+go test ./...
+golangci-lint run
+go run ./cmd/api
 ```
 
-No Go tests exist yet.
-
-### Database migrations
+## Database
 
 ```bash
 cd migrations
@@ -100,19 +335,31 @@ alembic upgrade head
 alembic revision --autogenerate -m "message"
 ```
 
-Default DB URL (`migrations/alembic.ini`): `postgresql://postgres:password@localhost:5432/blightsanest_dev` — matches the `docker-compose.yml` postgres service credentials.
-
-### Local infrastructure
+## Local Stack
 
 ```bash
 docker-compose up -d postgres redis ollama
 ```
 
-The `rag`, `api`, and `pubsub` services in `docker-compose.yml` are commented out (no Dockerfiles yet) — only Postgres, Redis, and Ollama currently start.
+## Protobuf (after gRPC lands)
 
-## Key Implementation Notes
+```bash
+make proto
+```
 
-- **LLM provider is dependency-injected**: `RAG.__init__` takes a `generate: Callable[[str, str], Awaitable[str]]`. Wire `rag/llm/bedrock.py:llm_bedrock` in production and `rag/llm/ollama.py:llm_ollama` in local dev — don't branch on environment inside the `RAG` class itself.
-- **MessagePack type conversion** (`rag/type_converter/type_converter.py`): handles types msgpack/JSON can't natively — `set`, `tuple`, `OrderedDict`, `Counter`, `defaultdict`, `numpy.ndarray`, and registered Pydantic models — by wrapping them as `{"__blightsanest_type__": name, "value": ...}`. Any new non-primitive type stored via `Storage` must be registered with `register_types` (or `register_pydantic_models` for Pydantic models) or it will round-trip as a plain dict/list instead of its original type.
-- **Storage fallback behavior** (`rag/storage/storage.py`): S3 is authoritative; Redis is an optional cache. A Redis failure on write or read is logged and ignored — it must never fail an upload or force-error a read that S3 could still serve.
-- **Go API server is scaffolding only** (`api/cmd/api/server.go`): `NewServer()` takes no arguments yet (hardcodes port 8899 and ignores CLI flags), and `main.go` has a `run()` loop that hasn't wired the started server's error path into shutdown yet. No routes are registered.
+---
+
+# Definition of Done
+
+A change is complete only when:
+
+- The four-component architecture is preserved.
+- Per-user isolation remains intact.
+- S3 remains the source of truth.
+- RAG remains read-only.
+- No runtime indexing was introduced.
+- Appropriate tests exist or are updated.
+- Lint and build pass.
+- No duplicate implementations were introduced.
+- Documentation is updated when behavior changes.
+- Code is clean, readable, and production-quality.
