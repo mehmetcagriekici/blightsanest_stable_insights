@@ -2,46 +2,49 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/mehmetcagriekici/blightsanest_stable_insights/api/internal/config"
 )
 
 func main() {
-  // get a context depedning on the signal
+	// get a context depedning on the signal
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
-	// defaults cli flags.
-	httpPort := flag.Int("port", 8899, "port to listen on")
-	dataDir := flag.String("data", "./data", "directiory to store data")
-	flag.Parse()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+		cancel()
+		os.Exit(1)
+	}
 
-  // run the server
-	status := run(ctx, cancel, *httpPort, *dataDir)
+	// run the server
+	status := run(ctx, cancel, cfg.Port)
 
-  // safety cancel
+	// safety cancel
 	cancel()
 	os.Exit(status)
 }
 
-func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
+func run(ctx context.Context, cancel context.CancelFunc, httpPort int) int {
 	s := newServer(httpPort, cancel)
 
-  // a channel for errors from the goroutine
+	// a channel for errors from the goroutine
 	errCh := make(chan error, 1)
 
-  // start the server in a goroutine 
+	// start the server in a goroutine
 	go func() {
 		errCh <- s.start()
 	}()
 
-  // block until a signal arrives
+	// block until a signal arrives
 	<-ctx.Done()
 
-  // fresh shutdown context
+	// fresh shutdown context
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
@@ -50,7 +53,7 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 		return 1
 	}
 
-  // catch server errirs without data race
+	// catch server errirs without data race
 	var serverErr error
 	select {
 	case serverErr = <-errCh:
