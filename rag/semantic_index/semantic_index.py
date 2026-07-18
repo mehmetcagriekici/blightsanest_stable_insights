@@ -37,10 +37,15 @@ class SemanticIndex:
         # iterate over the documents
         for i in range(len(documents)):
             document = documents[i]
+            # keep the docmap current so chunks can always be hydrated back
+            # to their document through the stable document_id, regardless
+            # of whether build_chunk_embeddings is called directly (ingestion)
+            # or via create_or_load_chunk_embeddings
+            self.docmap[document.id] = document
             # if document content is empty move to the next iteration
             if document.content == "":
                 continue
-            
+
             # create chunks from the document contents
             curr_chunks = semantic_chunk(document.content, 4, 1)
             # iterate over the chunks
@@ -49,7 +54,7 @@ class SemanticIndex:
                 chunks.append(curr_chunks[j])
                 # create chunk metada
                 metadata = {
-                        "document_index": i,
+                        "document_id": document.id,
                         "chunk_index": j,
                         "total_chunks": len(curr_chunks),
                         }
@@ -125,20 +130,25 @@ class SemanticIndex:
             # get chunk metadata
             metadata = self.chunk_metadata[i]
             # if the document score does not exist create a new one
-            if metadata["document_index"] not in document_scores:
-                document_scores[metadata["document_index"]] = similarity_score
-            elif document_scores[metadata["document_index"]] < similarity_score:
+            if metadata["document_id"] not in document_scores:
+                document_scores[metadata["document_id"]] = similarity_score
+            elif document_scores[metadata["document_id"]] < similarity_score:
                 # otherwise if the current score is larger than the previous one update it
-                document_scores[metadata["document_index"]] = similarity_score
+                document_scores[metadata["document_id"]] = similarity_score
 
         # get the top documents using the limit
         top_documents = sorted(document_scores.items(), key=lambda kv: kv[1], reverse=True)[:limit]
         # from the top documents create the result that will be sent
         results = []
         for kv in top_documents:
-            document_index = kv[0]
-            document = self.documents[document_index]
-            metadata = list(filter(lambda d: d["document_index"] == document_index, self.chunk_metadata))
+            document_id = kv[0]
+            # resolve chunks back to documents through the stable docmap
+            # using document_id - never rely on positional indexes, since
+            # cached chunk_metadata can outlive a reordering of self.documents
+            document = self.docmap.get(document_id)
+            if document is None:
+                continue
+            metadata = list(filter(lambda d: d["document_id"] == document_id, self.chunk_metadata))
             # get the first metadata
             if len(metadata) > 0:
                 metadata = metadata[0]

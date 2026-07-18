@@ -373,16 +373,16 @@ class TestTypeConverterComplexRealWorld:
         converter = TypeConverter()
         
         chunk_metadata = [
-            {"document_index": 0, "chunk_index": 0, "total_chunks": 5},
-            {"document_index": 0, "chunk_index": 1, "total_chunks": 5},
-            {"document_index": 1, "chunk_index": 0, "total_chunks": 3}
+            {"document_id": "doc1", "chunk_index": 0, "total_chunks": 5},
+            {"document_id": "doc1", "chunk_index": 1, "total_chunks": 5},
+            {"document_id": "doc2", "chunk_index": 0, "total_chunks": 3}
         ]
-        
+
         serialized = converter.serialize(chunk_metadata)
         restored = converter.deserialize(serialized)
-        
+
         assert len(restored) == 3
-        assert restored[0]["document_index"] == 0
+        assert restored[0]["document_id"] == "doc1"
         assert restored[2]["total_chunks"] == 3
 
     def test_numpy_embeddings_array(self):

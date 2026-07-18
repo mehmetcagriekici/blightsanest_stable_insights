@@ -15,8 +15,15 @@ class Storage:
         # redis connection
         self.redis_connection = redis.Redis(host=redis_host, port=redis_port)
 
-        # aws s3 client
-        self.s3_client = boto3.client("s3")
+        # aws s3 client - scoped to this user's own credentials so each
+        # user's data is only ever accessed with their own identity, never
+        # a shared/default one from the process environment
+        self.s3_client = boto3.client(
+            "s3",
+            aws_access_key_id=database_user.aws_access_key_id,
+            aws_secret_access_key=database_user.aws_secret_access_key,
+            region_name=database_user.region,
+        )
 
         # type converter for packaging and unpackaging
         self.type_converter = TypeConverter()
