@@ -1,7 +1,7 @@
 # BlightSanest: Progress & Roadmap
 
-**Current Status**: Phase 1 (RAG Service) — Final Testing & Bedrock Integration  
-**Last Updated**: June 2026
+**Current Status**: Phase 1 (RAG Service) finishing — Phase 3 (Go API) scaffolding started in parallel  
+**Last Updated**: September 2026
 
 ---
 
@@ -9,14 +9,13 @@
 
 | Metric | Status | Notes |
 |--------|--------|-------|
-| **Phase 1: RAG Service** | 🟡 90% Complete | Core indexing/search done. Bedrock integration in progress. |
-| **Phase 2: Database** | ✅ 100% Complete | Aurora schema, Alembic migrations, ORM models all working. |
-| **Phase 3: API Service** | ⏳ 0% (Blocked) | Awaiting Phase 1 completion. |
-| **Phase 4: PubSub Service** | ⏳ 0% (Blocked) | Deferred until API is operational. |
-| **Phase 5: Infrastructure** | ⏳ 0% (Blocked) | Dockerfiles and EKS setup pending. |
-| **Phase 6: Version 2** | ⏳ 0% (Future) | Shared community layer (post v1 release). |
-
-**Overall Project Progress**: ~25% (1.5 of 6 major phases complete)
+| **Phase 1: RAG Service** | 🟡 In Progress | Indexing, hybrid search, storage, RAG class, Ollama + Bedrock providers implemented. Bedrock untested; per-component unit tests, storage-layout and credential fixes pending. |
+| **Phase 2: Database** | 🟡 Partial | `users` and `documents` tables, SQLAlchemy models, first Alembic migration done. pgvector / `embeddings` table not started. |
+| **Phase 3: API Service** | 🟡 Started | Go HTTP server with graceful shutdown, typed env config, slog logger (not yet wired in), domain types. No routes, handlers, services, or repositories yet. |
+| **Phase 4: gRPC Integration** | ⏳ Not Started | No `proto/` directory yet. |
+| **Phase 5: PubSub Service** | ⏳ Not Started | No `pubsub/` directory yet. |
+| **Phase 6: Infrastructure** | ⏳ Not Started | No Dockerfiles, IaC, or CI. Docker Compose runs Postgres, Redis, Ollama only. |
+| **Phase 7: Version 2** | ⏳ Future | Shared community layer (post v1 release). |
 
 ---
 
@@ -24,239 +23,158 @@
 
 ### 2.1 What's Complete ✅
 
-#### 2.1.1 Core RAG Logic
-- ✅ `RAG` class fully implemented
+#### 2.1.1 Core RAG Logic (`rag/rag/rag.py`)
+- ✅ `RAG` class
   - Takes query + retrieved documents
-  - Calls LLM (Ollama currently, Bedrock coming)
-  - Returns structured response (Pydantic `RagResponse`)
-  - Status: found/not found, LLM answer, source docs
-- ✅ Proper dependency injection (LLM `generate` function passed via constructor)
-  - Enables clean mocking in tests
-  - Production and test code share same implementation
+  - Formats documents as `[id] content` for citation in the prompt
+  - Calls the injected LLM `generate(user_prompt, system_prompt)` function
+  - Parses the JSON reply into a Pydantic `RagResponse` (`status`: found / not found, `response`)
+  - Raises `ValueError` on no response, non-JSON, or missing fields
+- ✅ Dependency injection: the LLM provider is passed via the constructor; no provider selection inside `RAG`
 
-#### 2.1.2 Inverted Index (BM25)
-- ✅ BM25 implementation from scratch
-  - Token-to-document-ID mapping
-  - Term frequency statistics
-  - Document length normalization
-  - Efficient scoring algorithm
-- ✅ Serialization via TypeConverter + MessagePack
-  - Handles arbitrary Python types (Counter, OrderedDict, sets)
-  - Compact binary format
-  - Fully tested (20+ edge cases)
-- ✅ Persistence to S3
-  - All BM25 structures saved as MessagePack blobs
-  - Organized under `s3://bucket/users/{user_id}/`
-  - S3 is source of truth
+#### 2.1.2 LLM Providers (`rag/llm/`)
+- ✅ `llm_ollama` — async Ollama client, `OLLAMA_HOST` env (default `http://localhost:11434`), default model `gemma3`
+- ✅ `llm_bedrock` — Bedrock Converse API (model-agnostic), `AWS_REGION_NAME` / `BEDROCK_MODEL_ID` env (default `anthropic.claude-3-haiku-20240307-v1:0`), boto3 call run via `asyncio.to_thread`
+  - Uses the default AWS credential chain (IAM role compatible)
+  - Returns `None` on client errors or malformed responses
+  - ⚠️ Not covered by any test yet
 
-#### 2.1.3 Semantic Index (Embeddings)
-- ✅ Sentence Transformer integration (all-MiniLM-L6-v2)
-  - 384-dimensional embeddings
-  - Efficient chunking (recursive, overlap-aware)
-  - Batch processing for speed
-- ✅ Chunk metadata tracking
-  - Document ID, chunk ID, token counts
-  - Source location (for citation)
-  - JSON-based storage
-- ✅ pgvector integration (Aurora PostgreSQL)
-  - Embeddings stored as vectors in database
-  - Similarity search via pgvector functions
-  - Metadata stored in JSONB columns
+#### 2.1.3 Inverted Index — BM25 (`rag/inverted_index/`)
+- ✅ BM25 from scratch (k1 = 1.5, b = 0.75)
+  - Token → document ID mapping, term frequencies, document lengths, docmap
+- ✅ `build()` / `save()` / `load()` entry points
+- ✅ Persisted via `Storage` as MessagePack blobs: `inverted_index`, `docmap`, `term_frequencies`, `doc_lengths`
 
-#### 2.1.4 Hybrid Search (RRF)
-- ✅ Reciprocal Rank Fusion combining BM25 + semantic
-  - BM25 captures lexical matching (exact terms)
-  - Semantic search captures meaning (synonyms, concepts)
-  - RRF avoids bias toward either method
-  - Produces ranked document list with scores
-- ✅ Tested with real documents and real queries
+#### 2.1.4 Semantic Index (`rag/semantic_index/`)
+- ✅ Sentence Transformers `all-MiniLM-L6-v2` (384-dim)
+- ✅ Sentence-based chunking with sliding window (`semantic_chunk`: 4 sentences per chunk, 1 sentence overlap)
+- ✅ Chunk metadata: `document_id`, `chunk_index`, `total_chunks`
+- ✅ Chunks resolved back to documents via the stable `docmap` by `document_id` (no positional indexes)
+- ✅ `build_chunk_embeddings()` / `create_or_load_chunk_embeddings()`; persisted as `chunk_embeddings` (numpy) and `chunk_metadata`
+- ✅ Search: per-document max cosine similarity across chunks
 
-#### 2.1.5 Storage Layer (S3 + Redis + Aurora)
-- ✅ `Storage` abstraction class
-  - `upload()` → S3 (authoritative)
-  - `get()` → tries Redis first, falls back to S3
-  - S3-first failure handling (Redis is optional)
-  - Used by both InvertedIndex and SemanticIndex
-- ✅ S3 organization (per-user namespace)
-  - Indexes isolated under `users/{user_id}/`
-  - Prevents cross-user data access
-  - Scales to millions of users
-- ✅ Redis caching strategy
-  - Hot cache for active users
-  - TTL-based expiration
-  - Automatic fallback to S3
-  - Non-critical (system works without it)
-- ✅ Aurora pgvector integration
-  - Embeddings vectors stored in DB
-  - Metadata in JSONB columns
-  - Queryable via SQL + pgvector functions
+#### 2.1.5 Hybrid Search — RRF (`rag/search/`)
+- ✅ Reciprocal Rank Fusion (k = 60) over the union of BM25 and semantic results
+- ✅ Content resolved from semantic results or the BM25 docmap
+- ✅ Default search limit 50
 
-#### 2.1.6 Type Conversion & Serialization
-- ✅ `TypeConverter` class (independent layer)
-  - Dynamic type registry (extensible)
-  - MessagePack serialization
-  - Handles: set, tuple, Counter, OrderedDict, defaultdict, numpy arrays, Pydantic models
+#### 2.1.6 Storage Layer (`rag/storage/`)
+- ✅ `Storage` class used by both indexes
+  - `upload_data(name, data)` → S3 (authoritative), then Redis with TTL (default 3600s)
+  - `load_data(name)` → Redis first, falls back to S3
+  - Redis errors on upload or load are logged and non-fatal
+- ✅ Keys are per-user: `{user_id}/{name}` in both S3 and Redis
+- ⚠️ See §2.2.2 for gaps against the target design (`users/` prefix, credentials, cache repopulation)
+
+#### 2.1.7 Type Conversion & Serialization (`rag/type_converter/`)
+- ✅ `TypeConverter` with dynamic type registry + MessagePack
+  - Handles set, tuple, Counter, OrderedDict, defaultdict, numpy arrays, Pydantic models
   - Recursive processing of nested structures
-  - 200+ test cases, all passing
-- ✅ Language-agnostic format (MessagePack)
-  - Can be read/written by Python, Go, JavaScript, etc.
-  - Smaller than JSON (important for S3/Redis)
-  - Deterministic serialization
 
-#### 2.1.7 Database Schema (Alembic Migrations)
-- ✅ Alembic initialization
-- ✅ SQLAlchemy ORM models
-  - `User` table (id, username, email, hashed_password, timestamps)
-  - `Document` table (id, user_id, timestamps)
-  - Cascade delete (document deletion removes related data)
-  - Relationships defined and tested
-- ✅ First migration applied
-  - Schema live in Aurora Serverless v2
-  - Reversible (can rollback)
-  - Version-controlled
-
-#### 2.1.8 Testing
-- ✅ Unit tests for all core classes
-  - TypeConverter: 200+ test cases
-  - Storage: S3/Redis/fallback scenarios
-  - InvertedIndex: BM25 scoring
-  - SemanticIndex: embedding generation
-  - HybridSearch: RRF ranking
-- ✅ Integration tests
-  - End-to-end: ingest → index → save → load → query → response
-  - Real documents, real LLM calls
-  - All tested locally with Ollama
-- ✅ Test infrastructure
-  - pytest with async support
-  - moto for S3 mocking (mock_aws, not mock_s3)
-  - conftest.py for fixtures
-  - pytest.ini configuration (asyncio_mode = auto)
-  - Debugging notes documented
+#### 2.1.8 Testing (`rag/test/`)
+- ✅ `test_type_converter.py` — 32 tests
+- ✅ `test_storage.py` — 8 tests: model registration, upload success/empty/S3 failure/Redis failure non-fatal, cache hit, cache-miss S3 fallback, S3 failure returns `None`
+- ✅ `test_rag.py` — 1 end-to-end test: build → save → reload → RRF search → `RAG` with a mocked `generate`
+- ✅ Infrastructure: pytest + pytest-asyncio (`asyncio_mode = strict`), moto `mock_aws`, `conftest.py` fixtures (user, documents, S3 bucket, real Redis)
 
 #### 2.1.9 Local Development Environment
-- ✅ Docker Compose setup
-  - PostgreSQL 15 Alpine (2-3 MB per image)
-  - Redis 7 Alpine
-  - Ollama service (optional, can run separately)
-  - All services on shared network
-  - Lightweight, fast startup
-- ✅ Virtual environment management
-  - Single venv at project root
-  - requirements.txt (pipreqs-generated)
-  - Auto-import support (LunarVim)
-  - Documented setup
-
-#### 2.1.10 Documentation
-- ✅ Project brief (high-level)
-- ✅ AWS context file (strategy)
-- ✅ RAG context file (status & roadmap)
-- ✅ Code comments (docstrings in all classes)
+- ✅ Docker Compose: PostgreSQL 15 Alpine, Redis 7 Alpine, Ollama — shared `blightsanest_network`
+  - RAG, API, PubSub services present but commented out (no Dockerfiles yet)
+- ✅ Python 3.12 (`rag/.python-version`), dependencies in root `requirements.txt`
 
 ### 2.2 What Remains for Phase 1 ⏳
 
-#### 2.2.1 Bedrock Integration (1-2 weeks)
-- ⏳ Replace Ollama with AWS Bedrock
-  - Bedrock is managed LLM service (no local container needed)
-  - Supports Claude, Llama, Mistral, etc.
-  - IAM-based authentication
-  - Production pricing model
-- ⏳ Update RAG class
-  - Modify `generate()` function to call Bedrock instead of Ollama
-  - Handle Bedrock request/response format
-  - Error handling for Bedrock timeouts/quota
-- ⏳ Credentials management
-  - AWS SDK integration (boto3)
-  - Secrets Manager for API keys
-  - IAM role for EKS pod (no hardcoded credentials)
-- ⏳ Testing
-  - Mock Bedrock responses for unit tests
-  - Test with real Bedrock in integration tests
-  - Verify cost tracking (Bedrock charges per token)
+#### 2.2.1 Bedrock Validation
+- ⏳ Unit tests for `llm_bedrock` with mocked Converse responses (success, client error, malformed shape)
+- ⏳ Integration test against real Bedrock (dev account)
+- ⏳ Benchmark Ollama vs Bedrock (quality, latency, cost)
 
-#### 2.2.2 End-to-End Manual Script (1 week)
-- ⏳ Create `e2e_test.py` or manual script
-  - Ingest sample documents (health, finance, etc.)
-  - Build indexes
-  - Save to S3 and Redis
-  - Load indexes back
-  - Run queries via RAG
-  - Verify response quality
-- ⏳ Document learnings
-  - Performance metrics (index build time, query latency)
-  - Storage usage (S3 size, Redis footprint)
-  - LLM quality (Ollama vs Bedrock comparison)
-  - Edge cases discovered
+#### 2.2.2 Align Storage With the Target Design
+- ⏳ Key prefix `users/{user_id}/` (currently `{user_id}/`)
+- ⏳ Credentials: `Storage` currently builds its S3 client from per-user `aws_access_key_id` / `aws_secret_access_key` / `region` fields on `User`. Target design is a service IAM role (no per-user secrets); decision pending
+- ⏳ Repopulate Redis on S3 fallback (currently a cache miss does not write back)
+- ⏳ Redis socket timeouts so an unreachable Redis falls back instead of hanging
+- ⏳ Chunk-metadata migration: indexes built before the `document_index` → `document_id` change must be rebuilt or versioned
 
-#### 2.2.3 Production Readiness Checklist
-- ⏳ Error handling
-  - Graceful handling of missing indexes
-  - S3 timeout recovery
-  - Bedrock rate limiting
-  - Empty result sets
-- ⏳ Logging & observability
-  - Structured logging (JSON)
-  - Log levels (DEBUG, INFO, WARN, ERROR)
-  - Request tracing (for debugging)
-  - Performance metrics (latency, throughput)
-- ⏳ Caching strategy validation
-  - Verify Redis TTL behavior
-  - Test cache invalidation (on index updates)
-  - Measure cache hit rate
-  - Monitor Redis memory usage
+#### 2.2.3 Pre-Built Index Enforcement
+- ⏳ `HybridSearch.__init__` currently calls `create_or_load_chunk_embeddings()` and `InvertedIndex.load()`, which build and save the index if storage is empty. Split this so the query path only loads, and building happens only at ingestion
+
+#### 2.2.4 Test Coverage
+- ⏳ Unit tests for `InvertedIndex` (BM25 scoring), `SemanticIndex`, `HybridSearch` (RRF), chunking helpers
+- ⏳ Tests for `llm_ollama` / `llm_bedrock`
+
+#### 2.2.5 Tooling & Production Readiness
+- ⏳ Move to `uv` + `pyproject.toml` + Ruff as specified in `CLAUDE.md` (no `pyproject.toml` / `uv.lock` yet)
+- ⏳ Structured logging (module loggers instead of `botocore.client.logging` / `print`)
+- ⏳ gRPC server (`rag/server.py` is currently an empty stub) — see Phase 4
+- ⏳ Error handling: missing indexes, S3 timeouts, Bedrock throttling, empty result sets
 
 ### 2.3 Phase 1 Completion Criteria
 
 Phase 1 is **COMPLETE** when:
-- ✅ All core RAG logic implemented and tested (DONE)
-- ✅ Storage layer working (S3, Redis, Aurora) (DONE)
-- ✅ Database schema in place (DONE)
-- ⏳ Bedrock integration working (IN PROGRESS)
-- ⏳ End-to-end test passes (PENDING)
-- ⏳ Production readiness checklist complete (PENDING)
-- ⏳ Ready for Phase 3 (API service) to integrate
+- ✅ Core RAG logic implemented and covered by the e2e test
+- ✅ Storage layer (S3 + Redis fallback) working and tested
+- ✅ Ollama and Bedrock providers implemented
+- ⏳ Bedrock tested (mocked + real)
+- ⏳ Storage layout and credentials aligned with the target design
+- ⏳ Query path never builds indexes
+- ⏳ Per-component unit tests in place
+- ⏳ Ready for Phase 3/4 (API integration over gRPC)
 
 ---
 
-## 3. Phase 2: Database (COMPLETE) ✅
+## 3. Phase 2: Database (PARTIAL)
 
-### 3.1 Completed Work
+### 3.1 Completed Work ✅
 
-- ✅ Aurora PostgreSQL Serverless v2 schema
-  - High availability (automatic failover)
-  - Automatic scaling (no capacity planning)
-  - Pay-per-second pricing
-  - pgvector extension for embeddings
-- ✅ SQLAlchemy ORM
-  - User model
-  - Document model
-  - Cascade deletes (proper cleanup)
-  - Timestamp tracking (created_at, updated_at)
-- ✅ Alembic migration framework
-  - Version control for schema changes
-  - Reversible migrations (dev-friendly)
-  - Production-safe rollback
-  - First migration deployed
-- ✅ Local PostgreSQL container
-  - Docker Compose integration
-  - Alpine base image (minimal)
-  - Shared Docker network with other services
-  - Automatic schema initialization
+- ✅ SQLAlchemy ORM (`models/`)
+  - `User`: `id` (UUID), `username` (unique), `email` (unique), `hashed_password`, `created_at`, `updated_at`
+  - `Document`: `id` (UUID), `user_id` (FK → users), `created_at`, `updated_at`
+  - ORM-level cascade (`all, delete-orphan`) from User → Documents
+- ✅ Alembic (`migrations/`)
+  - First migration `811ecb922478` creates `users` and `documents`; reversible
+- ✅ Local PostgreSQL 15 Alpine container via Docker Compose
 
-### 3.2 Not Required for Phase 2
+### 3.2 Remaining ⏳
 
-- Embedding storage queries are in pgvector (handled by RAG)
-- Search queries are read-only (no custom business queries yet)
-- Scaling is handled by Aurora Serverless (auto)
+- ⏳ pgvector extension (the `postgres:15-alpine` image does not include it; needs a pgvector image and a migration)
+- ⏳ `embeddings` table (document_id, chunk_id, `vector(384)`, JSONB metadata)
+- ⏳ `documents` metadata columns (filename, content_type, size_bytes)
+- ⏳ Database-level `ON DELETE CASCADE` on `documents.user_id` (current FK has no ON DELETE clause)
+- ⏳ RAG read-only SQL access (no SQL code in `rag/` yet)
+- ⏳ Aurora Serverless v2 provisioning (only the local container exists)
 
 ---
 
-## 4. Phase 3: API Service (NOT STARTED)
+## 4. Phase 3: API Service (STARTED)
 
 ### 4.1 Scope
 
 The API is the central orchestrator. It receives user requests, validates them, routes to RAG/PubSub, handles domain logic, manages ingestion, and coordinates with the database.
 
-### 4.2 Architecture
+### 4.2 What Exists ✅
+
+- ✅ Go module `github.com/mehmetcagriekici/blightsanest_stable_insights/api` (Go 1.26)
+- ✅ `cmd/api/main.go` — signal-aware context (SIGINT/SIGTERM), config load, `run()` that handles both shutdown signals and server start failures
+- ✅ `cmd/api/server.go` — `http.Server` wrapper with `ServeMux` (no routes yet), `start()` / `kill()` with 5s graceful shutdown
+- ✅ `internal/config` — typed `Config` loaded once from env: `PORT` (8080), `CUSTOM_BUFFER_SIZE` (8192), `ENV` (`development`)
+- ✅ `cmd/api/logger.go` — `log/slog` JSON logger to a buffered file, debug level in development, `env` + `hostname` attributes
+  - ⚠️ Not yet called from `main`
+- ✅ `internal/domain` — `RagRequest`, `RagResponse`, `Document` types
+
+### 4.3 Remaining ⏳
+
+- ⏳ Wire the logger (request ID + user ID per request)
+- ⏳ Handlers → services → repositories layers
+- ⏳ Repositories for users/documents (tests against real Postgres via Docker Compose)
+- ⏳ Server timeouts (`ReadHeaderTimeout` etc.)
+- ⏳ Document ingestion endpoint (store in S3, trigger index build)
+- ⏳ Cognito JWT validation, per-user authorization, rate limiting
+- ⏳ Domain modules (health, finance, music, …)
+- ⏳ Tests (none yet)
+- ⏳ gRPC clients for RAG and PubSub (Phase 4)
+
+### 4.4 Target Architecture
 
 ```
 User Request
@@ -278,39 +196,26 @@ Go API Service
 Response → User
 ```
 
-### 4.3 Key Responsibilities
+### 4.5 Key Responsibilities
 
 | Responsibility | Details |
 |---|---|
 | **Request Routing** | HTTP → gRPC dispatch. Orchestrate multi-step operations. |
 | **Authentication** | Validate Cognito JWT tokens. Extract user_id. |
 | **Authorization** | Check per-user access controls. Prevent cross-user access. |
-| **Document Ingestion** | Accept file uploads, validate, store in S3, trigger RAG reindex. |
+| **Document Ingestion** | Accept file uploads, validate, store in S3, trigger RAG index build. |
 | **Domain Modules** | Health (openEHR, FHIR), Finance (CoinGecko, Alpha Vantage), Music, Games, etc. |
 | **User Management** | Profile CRUD, settings, preferences. |
 | **Rate Limiting** | Per-user request quotas. Prevent abuse. |
-| **Error Handling** | Proper HTTP status codes. Informative error messages. |
-| **Logging** | Structured logs for debugging and compliance. |
+| **Error Handling** | HTTP status mapping in handlers only. |
+| **Logging** | Structured `slog` logs with request ID and user ID. |
 
-### 4.4 gRPC Contracts (Pending)
+### 4.6 Testing Plan
 
-Will define `.proto` files for:
-- RAG service (query, index rebuild)
-- PubSub service (publish event, subscribe)
-
-### 4.5 Estimated Effort
-
-- **Core API**: 2-3 weeks (basic routing, auth, CRUD)
-- **Domain modules**: 2-3 weeks (per domain, starting with health)
-- **Integration**: 1-2 weeks (gluing services together)
-- **Total**: **3-4 weeks**
-
-### 4.6 Testing
-
-- Unit tests for domain logic
+- Table-driven unit tests for config, services, domain logic
+- Repository tests against real PostgreSQL (Docker Compose)
 - Integration tests (API ↔ RAG)
 - End-to-end tests (user journey)
-- Load tests (rate limiting, concurrent users)
 
 ---
 
@@ -318,15 +223,15 @@ Will define `.proto` files for:
 
 ### 5.1 Scope
 
-Currently, API and RAG are in-process (single binary). After Phase 3, they'll be separate services communicating via gRPC.
+API and RAG are currently separate codebases with no connection: the RAG e2e test drives `HybridSearch` and `RAG` directly in Python. This phase connects them (and later PubSub) over gRPC.
 
 ### 5.2 Changes Required
 
 | Service | Change |
 |---|---|
-| **RAG** | Add gRPC server. Define `.proto` for Query RPC. |
-| **API** | Add gRPC client stub. Call RAG via RPC instead of in-process. |
-| **Proto** | Define message types for queries, responses, errors. |
+| **Proto** | Create `proto/` with message types for queries, responses, errors. `make proto` target. |
+| **RAG** | Implement gRPC server in `rag/server.py`; generated code in `rag/gen/`. |
+| **API** | gRPC client stub; generated code in `api/internal/gen/`. |
 
 ### 5.3 Proto Definition (Draft)
 
@@ -350,20 +255,12 @@ message QueryResponse {
 }
 ```
 
-### 5.4 Estimated Effort
+### 5.4 Benefits
 
-- **Proto definitions**: 1 week
-- **gRPC server (RAG)**: 1 week
-- **gRPC client (API)**: 1 week
-- **Testing**: 1 week
-- **Total**: **2-3 weeks**
-
-### 5.5 Benefits
-
-- ✅ Loose coupling (can replace RAG without changing API)
-- ✅ Independent scaling (RAG can scale independently)
-- ✅ Network resilience (gRPC retries, timeouts)
-- ✅ Type-safe contracts (proto ensures compatibility)
+- Loose coupling (can replace RAG without changing API)
+- Independent scaling
+- Network resilience (retries, timeouts)
+- Type-safe contracts
 
 ---
 
@@ -371,7 +268,7 @@ message QueryResponse {
 
 ### 6.1 Scope
 
-Real-time, opt-in data sharing between users. Enables community intelligence layer (v2).
+Real-time, opt-in data sharing between users. Foundation for the community layer (v2). PubSub never talks to RAG directly.
 
 ### 6.2 Architecture
 
@@ -388,9 +285,8 @@ PubSub Service
     └─ Subscribers notified in real-time
     ↓
 User B (listening)
-    ├─ Receives event
-    ├─ Updates local indexes
-    └─ RAG incorporates shared data
+    ↓
+API ingests shared data (index updates go through the API, not PubSub → RAG)
 ```
 
 ### 6.3 Key Responsibilities
@@ -404,16 +300,9 @@ User B (listening)
 | **Anonymization** | Strip PII before sharing (v2 requirement). |
 | **Rate Limiting** | Prevent spam/DoS on pubsub channels. |
 
-### 6.4 Estimated Effort
-
-- **Core PubSub**: 2-3 weeks
-- **Redis integration**: 1 week
-- **Testing**: 1-2 weeks
-- **Total**: **3-4 weeks**
-
 ---
 
-## 7. Phase 5: Infrastructure & Deployment (NOT STARTED)
+## 7. Phase 6: Infrastructure & Deployment (NOT STARTED)
 
 ### 7.1 Scope
 
@@ -421,50 +310,27 @@ Containerization, CI/CD pipelines, AWS resource provisioning, and production dep
 
 ### 7.2 Components
 
-| Component | Status | Effort |
-|---|---|---|
-| **Dockerfiles** | ⏳ Pending | 1 week (RAG, API, PubSub) |
-| **Docker Compose** | 🟡 Partial | 1 week (integrate all services) |
-| **ECR** | ⏳ Pending | 1 week (registry, push pipelines) |
-| **EKS** | ⏳ Pending | 2-3 weeks (cluster setup, manifests, networking) |
-| **CI/CD Pipelines** | ⏳ Pending | 2-3 weeks (GitHub Actions) |
-| **Secrets Management** | ⏳ Pending | 1 week (Secrets Manager integration) |
-| **Monitoring** | ⏳ Pending | 1-2 weeks (CloudWatch, alarms) |
-| **Total** | **4-6 weeks** |
+| Component | Status |
+|---|---|
+| **Dockerfiles** (RAG, API, PubSub) | ⏳ Pending |
+| **Docker Compose** | 🟡 Partial — Postgres, Redis, Ollama only; app services commented out |
+| **ECR** | ⏳ Pending |
+| **EKS** | ⏳ Pending |
+| **CI/CD (GitHub Actions)** | ⏳ Pending |
+| **Secrets Management** | ⏳ Pending |
+| **IaC (Terraform or CloudFormation)** | ⏳ Pending |
+| **Monitoring (CloudWatch)** | ⏳ Pending |
 
 ### 7.3 Deployment Checklist
 
-- ⏳ Dockerfile for each service (RAG, API, PubSub)
-  - Alpine base images (minimal)
-  - Multi-stage builds (optimize layer caching)
-  - Non-root user (security)
-  - Health checks
-- ⏳ Kubernetes manifests
-  - Deployments for each service
-  - Services (internal networking)
-  - ConfigMaps (configuration)
-  - Secrets (credentials)
-  - Ingress (external traffic)
-  - StatefulSets for databases (if needed)
-- ⏳ CI/CD pipeline
-  - Build on every commit
-  - Run tests
-  - Push to ECR
-  - Deploy to EKS (staging, then production)
-  - Automatic rollback on failure
-- ⏳ Infrastructure-as-Code (IaC)
-  - Terraform or CloudFormation
-  - Define Aurora cluster, S3 bucket, Redis, EKS cluster
-  - Reproducible deployments
-  - Versioning
-
-### 7.4 Estimated Effort
-
-**Total**: **4-6 weeks**
+- ⏳ Dockerfile per service: Alpine base, multi-stage builds, non-root user, health checks
+- ⏳ Kubernetes manifests: Deployments, Services, ConfigMaps, Secrets, Ingress
+- ⏳ CI/CD: build, lint, test, push to ECR, deploy to EKS (staging → production), automatic rollback
+- ⏳ IaC for Aurora, S3, ElastiCache, EKS
 
 ---
 
-## 8. Phase 6: Version 2 – Community Intelligence (FUTURE)
+## 8. Phase 7: Version 2 – Community Intelligence (FUTURE)
 
 ### 8.1 Vision
 
@@ -483,100 +349,69 @@ Move from personal-only (v1) to opt-in community sharing (v2).
 
 - No community features in v1
 - All v1 data is private
-- v2 will be opt-in only
-
-### 8.4 Estimated Effort
-
-**4-8 weeks** (post v1 release)
 
 ---
 
 ## 9. Overall Roadmap Timeline
 
-### 9.1 Projected Milestones
+### 9.1 Milestones
 
-| Phase | Duration | Start | End | Status |
-|-------|----------|-------|-----|--------|
-| Phase 1: RAG | 4 weeks | Apr 2026 | Jun 2026 | 🟡 In progress (Bedrock TBD) |
-| Phase 2: Database | 1 week | May 2026 | May 2026 | ✅ Complete |
-| Phase 3: API | 3-4 weeks | Jun 2026 | Jul 2026 | ⏳ Scheduled |
-| Phase 4: gRPC | 2-3 weeks | Jul 2026 | Aug 2026 | ⏳ Scheduled |
-| Phase 5: PubSub | 3-4 weeks | Aug 2026 | Sep 2026 | ⏳ Scheduled |
-| Phase 6: Infra & Deployment | 4-6 weeks | Sep 2026 | Oct 2026 | ⏳ Scheduled |
-| **v1 Release** | — | — | **Oct 2026** | 🎯 Target |
-| Phase 7: v2 Features | 4-8 weeks | Nov 2026 | Jan 2027 | ⏳ Future |
+Original plan dates are kept for reference; phases 1 and 2 have run past their planned end dates, and Phase 3 started in parallel with Phase 1.
+
+| Phase | Planned Duration | Planned Window | Status |
+|-------|------------------|----------------|--------|
+| Phase 1: RAG | 4 weeks | Apr – Jun 2026 | 🟡 In progress |
+| Phase 2: Database | 1 week | May 2026 | 🟡 Partial (pgvector pending) |
+| Phase 3: API | 3-4 weeks | Jun – Jul 2026 | 🟡 Started (Jul 2026) |
+| Phase 4: gRPC | 2-3 weeks | Jul – Aug 2026 | ⏳ Not started |
+| Phase 5: PubSub | 3-4 weeks | Aug – Sep 2026 | ⏳ Not started |
+| Phase 6: Infra & Deployment | 4-6 weeks | Sep – Oct 2026 | ⏳ Not started |
+| **v1 Release** | — | **Oct 2026 (original target)** | Needs re-planning |
+| Phase 7: v2 Features | 4-8 weeks | Nov 2026 – Jan 2027 | ⏳ Future |
 
 ### 9.2 Critical Path
 
 ```
-Phase 1 (RAG) ← Blocker for everything else
-    ↓
-Phase 2 (Database)
-    ↓
-Phase 3 (API)
-    ↓
-Phase 4 (gRPC)
-    ↓
-Phase 5 (PubSub) ← Can run parallel with Infra
-    ↓
-Phase 6 (Infra & Deployment)
-    ↓
-v1 Release → Oct 2026
+Phase 1 (RAG) ──┐
+Phase 2 (DB)  ──┼─→ Phase 3 (API) → Phase 4 (gRPC) → Phase 5 (PubSub) ┐
+                                                   └→ Phase 6 (Infra) ─┴→ v1 Release
 ```
 
 ---
 
 ## 10. Current Blockers & Next Actions
 
-### 10.1 Phase 1 Completion (Blocking Everything)
+### 10.1 Open Decisions
 
-**Blocker**: Bedrock integration not yet complete
+1. **pgvector**: implement the `embeddings` table and RAG read path, or keep embeddings in S3/Redis only for v1
+2. **S3 credentials**: per-user credentials on `User` (current code) vs. a single service IAM role (target design)
 
-**Actions**:
-1. ✅ Study AWS Bedrock API (Claude, Llama models)
-2. ✅ Update RAG class to accept Bedrock as LLM provider
-3. ✅ Test with mock Bedrock responses
-4. ✅ Test with real Bedrock (dev environment)
-5. ✅ Benchmark: Ollama vs Bedrock (quality, latency, cost)
-6. ✅ Document learnings
-7. ✅ Run end-to-end test with Bedrock
-8. → **Unblock Phase 3**
+### 10.2 Phase 1 Next Actions
 
-**Timeline**: 1-2 weeks
+1. Bedrock tests (mocked + real)
+2. `users/{user_id}/` key prefix and chunk-metadata migration
+3. Remove index building from the `HybridSearch` query path
+4. Unit tests for BM25, semantic index, RRF
+5. `uv` + `pyproject.toml` + Ruff
 
-### 10.2 Phase 3 Readiness (API Service)
+### 10.3 Phase 3 Next Actions
 
-**Prerequisites** (blocked until Phase 1 complete):
-- ✅ Phase 1 RAG fully functional with Bedrock
-- ✅ gRPC proto contracts defined (for Phase 4)
-
-**Preparation** (can start now):
-- Define domain module interfaces (health, finance, music, etc.)
-- Plan database queries for user/document CRUD
-- Design API endpoints (REST, GraphQL, or RPC)
-- Plan authentication flow (Cognito integration)
-- Outline rate limiting strategy
+1. Wire the slog logger into `main` (stdout or flushed file)
+2. Add server timeouts
+3. First handler → service → repository slice (e.g. health check, then documents)
+4. Tests for `config.Load` and `run()`
 
 ---
 
 ## 11. Risk Analysis
 
-### 11.1 High-Risk Items
-
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | Bedrock latency exceeds requirements | Medium | High | Test early, compare with Ollama. May need caching layer. |
-| S3 costs exceed budget | Low | Medium | Monitor S3 usage. Compress indexes. Consider Glacier for archives. |
-| gRPC adoption complexity | Low | Medium | Defer gRPC to Phase 4. Keep in-process until necessary. |
-| Kubernetes deployment complexity | Medium | High | Start with simple manifest. Iterate. Use AWS best practices. |
-
-### 11.2 Mitigation Strategies
-
-- ✅ Comprehensive testing at each phase
-- ✅ Regular cost monitoring (CloudWatch)
-- ✅ Phased rollout (dev → staging → production)
-- ✅ Automated rollback on failure
-- ✅ Regular architecture reviews
+| S3 costs exceed budget | Low | Medium | Monitor S3 usage. Compress indexes. |
+| gRPC adoption complexity | Low | Medium | Keep contracts small; start with `Query`. |
+| Kubernetes deployment complexity | Medium | High | Start with simple manifests. Iterate. |
+| Schedule slip (v1 Oct 2026 target) | High | Medium | Re-plan dates after Phase 1 closes. |
 
 ---
 
@@ -584,121 +419,82 @@ v1 Release → Oct 2026
 
 ### 12.1 Phase 1 Completion (RAG)
 
-- ✅ End-to-end test passes (ingest → index → query → response)
-- ✅ Bedrock integration working with <1s latency
-- ✅ 100+ documents indexed without memory issues
-- ✅ Hybrid search (BM25 + semantic) producing relevant results
-- ✅ Zero data loss (S3 persistence verified)
-- ✅ Redis fallback working (S3 used when Redis is down)
-- ✅ All tests passing (>95% coverage)
+- End-to-end test passes (ingest → index → query → response) — ✅ with mocked LLM
+- Bedrock integration working with <1s latency — ⏳
+- 100+ documents indexed without memory issues — ⏳
+- Hybrid search producing relevant results — ✅ in e2e test
+- Redis fallback working (S3 used when Redis is down) — ✅ unit tested
+- All tests passing with high coverage — ⏳ (BM25/semantic/RRF lack unit tests)
 
-### 12.2 v1 Release (Oct 2026)
+### 12.2 v1 Release
 
-- ✅ All phases 1-6 complete
-- ✅ Single user successfully ingests, queries, and retrieves data
-- ✅ API authentication working (Cognito)
-- ✅ API rate limiting enforced
-- ✅ EKS deployment successful
-- ✅ CI/CD pipeline automated
-- ✅ Cost tracking shows <$50/month for single user
-- ✅ Documentation complete (API, deployment, operations)
-- ✅ Zero critical bugs
-- ✅ Production ready (SLA-compliant, resilient)
+- All phases 1-6 complete
+- Single user successfully ingests, queries, and retrieves data
+- API authentication (Cognito) and rate limiting enforced
+- EKS deployment and CI/CD automated
+- Cost tracking shows <$50/month for single user
+- Documentation complete (API, deployment, operations)
 
 ---
 
 ## 13. Developer Notes
 
-### 13.1 Context Switching
-
-Each phase should have its own dedicated chat session with:
-- **Phase Brief** (high-level goals)
-- **Architecture diagram** (boxes, arrows, communication)
-- **Success criteria** (clear completion definition)
-- **Testing strategy** (how to validate)
-
-### 13.2 Code Organization
+### 13.1 Code Organization (actual)
 
 ```
-blightsanest/
+blightsanest_stable_insights/
 ├── rag/                          # Python RAG service
-│   ├── src/
-│   │   ├── rag.py               # Core RAG class
-│   │   ├── inverted_index.py    # BM25
-│   │   ├── semantic_index.py    # Embeddings
-│   │   ├── hybrid_search.py     # RRF
-│   │   ├── storage.py           # S3 + Redis layer
-│   │   └── models/              # Pydantic models
-│   ├── tests/
-│   ├── requirements.txt
-│   └── Dockerfile
-├── api/                          # Go API service (Phase 3)
-├── pubsub/                       # Go PubSub service (Phase 5)
-├── migrations/                   # Alembic migrations
-├── docker-compose.yml            # Local dev environment
-└── README.md
+│   ├── rag/rag.py               # Core RAG class
+│   ├── inverted_index/          # BM25
+│   ├── semantic_index/          # Embeddings + chunking
+│   ├── search/                  # Hybrid search (RRF)
+│   ├── storage/                 # S3 + Redis layer
+│   ├── type_converter/          # MessagePack TypeConverter
+│   ├── llm/                     # ollama.py, bedrock.py
+│   ├── custom_types/            # Pydantic models
+│   ├── helpers/, constants/
+│   ├── server.py                # gRPC server stub (empty)
+│   ├── test/
+│   └── pytest.ini
+├── api/                          # Go API service
+│   ├── cmd/api/                 # main, server, logger
+│   └── internal/{config,domain}/
+├── models/                       # SQLAlchemy models
+├── migrations/                   # Alembic
+├── docker-compose.yml
+├── requirements.txt
+└── CLAUDE.md
 ```
 
-### 13.3 Git Workflow
+Not yet present: `proto/`, `pubsub/`, `rag/gen/`, `api/internal/gen/`, Dockerfiles, `Makefile`.
+
+### 13.2 Git Workflow
 
 - Feature branches for each phase
 - PRs with test requirements
 - Merge to main only after review
 - Tag each phase completion (v0.1, v0.2, etc.)
 
-### 13.4 Documentation
+### 13.3 Documentation
 
-- Keep README.md updated with latest architecture
-- Add DEPLOYMENT.md for infrastructure setup
-- Maintain API documentation (OpenAPI/Swagger)
-- Document each service's gRPC contracts
-
----
-
-## 14. Appendix: Key Files & Locations
-
-### 14.1 Project Context Files
-
-- `BlightSanest_ProjectBrief.docx` → High-level vision, build order
-- `BlightSanest_RAG_AWS_Context.txt` → AWS strategy, Phase 1 focus
-- `BlightSanest_RAG_Context.txt` → Current RAG status, next actions
-- `BlightSanest_Overview.md` → Detailed architecture (this file set)
-
-### 14.2 Source Code
-
-- `rag/src/rag.py` → Core RAG class
-- `rag/src/inverted_index.py` → BM25 indexing
-- `rag/src/semantic_index.py` → Embedding-based indexing
-- `rag/src/hybrid_search.py` → RRF fusion
-- `rag/src/storage.py` → S3 + Redis abstraction
-- `migrations/versions/` → Alembic schema migrations
-
-### 14.3 Configuration
-
-- `docker-compose.yml` → Local development setup
-- `pytest.ini` → Test runner configuration
-- `requirements.txt` → Python dependencies
-
-### 14.4 Tests
-
-- `rag/tests/test_type_converter.py` → 200+ type conversion tests
-- `rag/tests/test_storage.py` → S3/Redis tests
-- `rag/tests/test_rag.py` → End-to-end RAG tests
+- `CLAUDE.md` — architecture constraints and dev commands
+- `BlightSanest_Overview.md` — architecture and design
+- `rag/README.md` — RAG component notes
+- Planned: `DEPLOYMENT.md`, OpenAPI docs, gRPC contract docs
 
 ---
 
-## 15. Summary
+## 14. Summary
 
-**BlightSanest** is a ~6-month, multi-phase project to build a production-grade, AWS-certified smart journaling platform.
-
-- **Current Status**: Phase 1 RAG service (90% complete, Bedrock integration pending)
-- **Next Phase**: Phase 3 API Service (blocks Phase 4 gRPC)
-- **v1 Target**: October 2026
-- **Key Principle**: Finish each phase before moving to the next (avoid "wormhole" iteration)
+- **Phase 1 (RAG)**: core complete; Bedrock tests, storage alignment, query-path index building, and unit tests remain
+- **Phase 2 (Database)**: users/documents schema done; pgvector pending
+- **Phase 3 (API)**: server/config/logger scaffolding in place; no endpoints yet
+- **Phases 4-6**: not started
+- **v1 target**: October 2026 originally; needs re-planning
 
 ---
 
-**Version**: 1.0  
-**Last Updated**: June 2026  
+**Version**: 1.1  
+**Last Updated**: September 2026  
 **Owner**: Call (Developer)  
 **Status**: Active Development

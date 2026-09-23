@@ -86,9 +86,9 @@ The system is built around **four interdependent legs** with the **API at the ce
 | Component | Language | Responsibility |
 |-----------|----------|-----------------|
 | **API** | Go | Central orchestrator. Routes requests to RAG, PubSub, and Database. Houses domain service modules. Handles auth, rate limiting, ingestion. |
-| **RAG** | Python | Domain-agnostic retrieval and generation. Builds indexes, performs hybrid search, generates LLM responses. Reads vectors from Database. |
+| **RAG** | Python | Domain-agnostic retrieval and generation. Builds indexes, performs hybrid search, generates LLM responses. Indexes currently live in S3/Redis; read-only pgvector access to the Database is planned. |
 | **PubSub** | Go | Opt-in real-time data sharing. Decoupled from RAG. Enables community data exchange layer (v2). |
-| **Database** | PostgreSQL (Aurora) | Persistent relational data (users, documents, metadata) + vector embeddings via pgvector. |
+| **Database** | PostgreSQL (Aurora) | Persistent relational data (users, documents). Vector embeddings via pgvector are planned. |
 
 ### 4.2 Communication Boundaries
 
@@ -102,15 +102,15 @@ Clear separation of concerns:
 | **API ↔ PubSub** | gRPC | When user triggers shared data exchange |
 | **PubSub ↔ RAG** | None | Deliberately decoupled; do not communicate directly |
 
-**Note**: gRPC is used for all inter-service communication (API ↔ RAG, API ↔ PubSub).
+**Note**: gRPC is the planned protocol for all inter-service communication (API ↔ RAG, API ↔ PubSub). It is not implemented yet: there is no `proto/` directory, and the API and RAG are not connected.
 
 ### 4.3 Indexing Strategy
 
 BlightSanest uses a **pre-built index strategy**—not runtime indexing:
 
 1. **Ingestion Time**: When a user saves new data, the API triggers an index update
-2. **Silent Indexing**: New documents are chunked, embedded, and indexed asynchronously
-3. **Persistent Storage**: Indexes (BM25 structures + vectors) are saved to S3 and Redis
+2. **Silent Indexing**: New documents are chunked, embedded, and indexed (planned to run asynchronously)
+3. **Persistent Storage**: Indexes (BM25 structures + chunk embeddings) are saved to S3 and Redis
 4. **Query Time**: RAG loads the user's index on-demand, performs hybrid search, generates response
 5. **No Rebuilding**: Queries never trigger index rebuilds—only updates trigger reindexing
 
@@ -118,7 +118,10 @@ This approach:
 - ✅ Avoids expensive indexing at query time
 - ✅ Scales to large document collections
 - ✅ Supports per-user privacy (each user has isolated index)
-- ✅ Enables incremental updates (append-only)
+
+**Current implementation**:
+- Index updates are full rebuilds via `build()` / `save()` / `build_chunk_embeddings()`; incremental (append-only) updates are not implemented.
+- `HybridSearch.__init__` loads indexes from storage but still builds and saves them if storage is empty. This fallback must be removed from the query path to fully enforce rule 5.
 
 ---
 
@@ -129,15 +132,15 @@ This approach:
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
 | **Backend / API** | Go | High-performance, concurrent service. Central orchestrator. |
-| **RAG Service** | Python 3.11+ | Machine learning, embeddings, search algorithms, LLM integration. |
+| **RAG Service** | Python 3.12 | Machine learning, embeddings, search algorithms, LLM integration. |
 | **PubSub Service** | Go | Real-time messaging and event distribution. |
-| **Service Communication** | gRPC + Protocol Buffers | Type-safe, high-performance RPC between services. |
+| **Service Communication** | gRPC + Protocol Buffers (planned) | Type-safe, high-performance RPC between services. |
 
 ### 5.2 Data & Storage
 
 | Component | AWS Service | Purpose |
 |-----------|------------|---------|
-| **Vectors & Metadata** | Amazon Aurora PostgreSQL (Serverless v2) + pgvector extension | Relational data, user accounts, document metadata, vector embeddings. |
+| **Relational Data (+ Vectors, planned)** | Amazon Aurora PostgreSQL (Serverless v2) + pgvector extension (planned) | User accounts and document records today; vector embeddings once pgvector lands. |
 | **Large Indexes & Embeddings** | AWS S3 | Source of truth for BM25 structures, chunk embeddings, term frequencies, document mappings. |
 | **Hot Index Cache** | AWS ElastiCache (Redis) | In-memory cache for active users' indexes. TTL-based expiration. Optional (S3 fallback). |
 
@@ -146,8 +149,8 @@ This approach:
 | Component | Technology | Environment |
 |-----------|-----------|-------------|
 | **Embeddings** | Sentence Transformers (all-MiniLM-L6-v2) | Local dev & production (runs locally or containerized). |
-| **LLM (Development)** | Ollama (Llama 3, Mistral, Phi-3) | Local development via Docker. |
-| **LLM (Production)** | AWS Bedrock | Managed LLM service; replaces Ollama in production. |
+| **LLM (Development)** | Ollama (`llm_ollama`, default model `gemma3`) | Local development via Docker. |
+| **LLM (Production)** | AWS Bedrock (`llm_bedrock`, Converse API, model set by `BEDROCK_MODEL_ID`) | Managed LLM service; replaces Ollama in production. Implemented, not yet tested. |
 | **Search Algorithm** | Hybrid Search + RRF | Combines BM25 (lexical) and semantic (embedding-based) search via Reciprocal Rank Fusion. |
 
 ### 5.4 Security & Access
@@ -188,7 +191,7 @@ RAG Service (triggered silently)
     ├─ Generate embeddings (Sentence Transformers)
     ├─ Build BM25 index
     ├─ Save structures to S3
-    └─ Populate pgvector in Aurora
+    └─ Populate pgvector in Aurora (planned)
     ↓
 Update Redis cache (active user's indexes)
     ↓
@@ -249,7 +252,7 @@ Return structured list of results
 
 ### 7.1 S3 Layout (Source of Truth)
 
-All data organized under per-user directory structure:
+Target layout, with all data under a per-user directory structure:
 
 ```
 s3://blightsanest-bucket/
@@ -272,31 +275,42 @@ s3://blightsanest-bucket/
             └── metadata.json
 ```
 
+**Current implementation**: `Storage` writes flat MessagePack objects to `{bucket}/{user_id}/{name}`, where `name` is one of `inverted_index`, `docmap`, `term_frequencies`, `doc_lengths`, `chunk_embeddings`, or `chunk_metadata`. The `users/` prefix, per-type folders, and original document files are not implemented yet. The bucket and S3 credentials currently come from fields on the RAG `User` model (`bucket_name`, `aws_access_key_id`, `aws_secret_access_key`, `region`). The target is a single service IAM role.
+
 **Key principle**: S3 is the **authoritative store**. All indexes persist here. Local/Redis copies are disposable.
 
 ### 7.2 Aurora PostgreSQL Schema
+
+Current schema (migration `811ecb922478`):
 
 ```sql
 -- Users table
 CREATE TABLE users (
     id UUID PRIMARY KEY,
-    username VARCHAR(255) UNIQUE,
-    email VARCHAR(255) UNIQUE,
-    hashed_password VARCHAR(255),
+    username VARCHAR NOT NULL UNIQUE,
+    email VARCHAR NOT NULL UNIQUE,
+    hashed_password VARCHAR NOT NULL,
     created_at TIMESTAMP,
     updated_at TIMESTAMP
 );
 
--- Documents table
+-- Documents table (cascade from users is ORM-level only)
 CREATE TABLE documents (
     id UUID PRIMARY KEY,
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    filename VARCHAR(255),
-    content_type VARCHAR(255),
-    size_bytes BIGINT,
+    user_id UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMP,
     updated_at TIMESTAMP
 );
+```
+
+Planned additions (not yet migrated):
+
+```sql
+-- Documents metadata columns
+ALTER TABLE documents
+    ADD COLUMN filename VARCHAR(255),
+    ADD COLUMN content_type VARCHAR(255),
+    ADD COLUMN size_bytes BIGINT;
 
 -- Vector embeddings (via pgvector extension)
 CREATE TABLE embeddings (
@@ -314,9 +328,10 @@ CREATE TABLE embeddings (
 Active users' indexes cached in Redis with TTL:
 
 ```
-Key Pattern: users/{user_id}/{index_type}
+Target Key Pattern: users/{user_id}/{index_type}
+Current Key Pattern: {user_id}/{index_type}
 
-Examples:
+Examples (target):
   - users/user_123/inverted_index       → BM25 structures (TTL: 1 hour)
   - users/user_123/chunk_embeddings     → Embeddings array (TTL: 1 hour)
   - users/user_123/chunk_metadata       → Metadata (TTL: 1 hour)
@@ -324,7 +339,7 @@ Examples:
 
 **Behavior**:
 - ✅ Cache hit → Serve from Redis (milliseconds)
-- ❌ Cache miss → Load from S3, update Redis, serve (seconds)
+- ❌ Cache miss → Load from S3, serve (seconds). Writing back to Redis on a miss is planned; today Redis is only populated on upload.
 - ❌ Redis down → Load from S3, skip cache (non-fatal)
 
 ---
@@ -400,14 +415,14 @@ User searches for specific entries without LLM synthesis:
 ### 10.1 Local Development
 ```
 Docker Compose:
-  ├─ PostgreSQL 15 (Alpine)
-  ├─ Redis 7 (Alpine)
-  ├─ Ollama (LLM)
-  ├─ RAG Service (Python)
-  ├─ API Service (Go)
-  └─ PubSub Service (Go)
+  ├─ PostgreSQL 15 (Alpine)          ✅ running
+  ├─ Redis 7 (Alpine)                ✅ running
+  ├─ Ollama (LLM)                    ✅ running
+  ├─ RAG Service (Python)            ⏳ commented out (no Dockerfile yet)
+  ├─ API Service (Go)                ⏳ commented out (no Dockerfile yet)
+  └─ PubSub Service (Go)             ⏳ commented out (no service yet)
 
-All services on shared Docker network. Moto mocks S3 locally.
+All services on shared Docker network (blightsanest_network). Tests mock S3 with moto.
 ```
 
 ### 10.2 Production (AWS)
@@ -474,9 +489,9 @@ AWS Infrastructure:
 
 | Phase | Status | Focus | Est. Duration |
 |-------|--------|-------|---------------|
-| 1 | ✅ **Complete** | RAG service, indexing, storage layer | Done |
-| 2 | 🚀 **In Progress** | Bedrock integration, end-to-end testing | 1-2 weeks |
-| 3 | ⏳ **Next** | Go API service, domain modules | 3-4 weeks |
+| 1 | 🟡 **In Progress** | RAG service, indexing, storage layer, Bedrock provider (untested) | — |
+| 2 | 🟡 **Partial** | Database: users/documents schema done, pgvector pending | — |
+| 3 | 🟡 **Started** | Go API service: server, config, logger scaffolding; no endpoints yet | 3-4 weeks |
 | 4 | ⏳ **Planned** | gRPC integration between API & RAG | 2-3 weeks |
 | 5 | ⏳ **Planned** | PubSub service, real-time sharing | 3-4 weeks |
 | 6 | ⏳ **Planned** | Infrastructure, EKS, CI/CD, deployment | 4-6 weeks |
@@ -521,19 +536,19 @@ AWS Infrastructure:
 ## 15. For Developers
 
 **Starting a new session?** Use these files:
-- `BlightSanest_ProjectBrief.docx` — High-level vision & build order
-- `BlightSanest_RAG_AWS_Context.txt` — AWS implementation strategy
-- `BlightSanest_RAG_Context.txt` — Current RAG completion status
+- `CLAUDE.md` — Architecture constraints and development commands
+- `BlightSanest_Progress_Roadmap.md` — Current implementation status
+- `rag/README.md` — RAG component notes
 
 **Contributing?**
 - Keep the four legs (API, RAG, PubSub, Database) loosely coupled
-- All inter-service communication through gRPC
+- All inter-service communication through gRPC (once implemented)
 - S3 is the source of truth; Redis is optional
 - Per-user indexing is a hard constraint (v1)
 - Test locally with Docker Compose before AWS
 
 ---
 
-**Version**: 1.0  
-**Last Updated**: June 2026  
-**Status**: RAG service phase (Phase 1) complete. Bedrock integration in progress.
+**Version**: 1.1  
+**Last Updated**: September 2026  
+**Status**: Phase 1 (RAG) finishing: Bedrock tests and storage alignment remain. Phase 3 (Go API) scaffolding started. See `BlightSanest_Progress_Roadmap.md` for details.
