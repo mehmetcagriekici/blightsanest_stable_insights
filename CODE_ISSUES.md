@@ -18,7 +18,8 @@ This file records problems found in code review. It lists issues only, with no f
 |---|----------|-------|--------|
 | R1 | `rag/semantic_index/semantic_index.py:95-102`, `:133` | Chunk metadata keys were renamed from `document_index` to `document_id`, but `create_or_load_chunk_embeddings` returns cached `chunk_metadata` from Redis/S3 without checking its format. | Any user whose index was built before commit `9ad67bc` gets `KeyError: 'document_id'` on their first semantic search. |
 | R2 | `rag/storage/storage.py:21-26`, `rag/custom_types/custom_types.py:17-22` | The S3 client is built from per-user `aws_access_key_id` / `aws_secret_access_key` stored on the `User` model. | Secret keys live in application data and memory. `User` is also registered with the TypeConverter (`storage.py:32`), so it can be serialized with its secrets. This conflicts with the roadmap's "IAM role, no hardcoded credentials". |
-| R3 | `rag/search/hybrid_search.py:17-21`, `rag/inverted_index/inverted_index.py:78-88`, `rag/semantic_index/semantic_index.py:104-105` | `HybridSearch.__init__` loads indexes, but if storage is empty both `InvertedIndex.load()` and `create_or_load_chunk_embeddings()` build and save the index. | Violates "queries must never trigger indexing". A query can trigger a full build and write to S3. |
+| R3 | `rag/search/hybrid_search.py:17-21`, `rag/inverted_index/inverted_index.py:84-98`, `rag/semantic_index/semantic_index.py:104-105` | `HybridSearch.__init__` loads indexes, but if storage is empty both `InvertedIndex.load()` and `create_or_load_chunk_embeddings()` build and save the index. | Violates "queries must never trigger indexing". A query can trigger a full build and write to S3. |
+| R21 | `rag/inverted_index/inverted_index.py:36`, `:57-60` | `build()` never resets `index`, `docmap`, `term_frequencies`, or `doc_lengths`, and `add_document` uses `Counter.update`, which adds to existing counts. | Calling `build()` again on the same instance (e.g. a re-index after an update) doubles term frequencies and keeps deleted documents in the index, which skews BM25 scores. |
 
 ### 1.2 Medium
 
@@ -28,7 +29,7 @@ This file records problems found in code review. It lists issues only, with no f
 | R5 | `rag/storage/storage.py:16` | `redis.Redis(...)` has no `socket_timeout` / `socket_connect_timeout`. | An unreachable (not refusing) Redis can hang calls instead of failing over to S3, which breaks "Redis failures must never be fatal". |
 | R6 | `rag/storage/storage.py:64-73` | On a cache miss, data loaded from S3 is not written back to Redis. | Redis is only filled on upload, so after TTL expiry every load hits S3. |
 | R7 | `rag/semantic_index/semantic_index.py:70-83` | `build_chunk_embeddings` returns `None` on upload failure, after in-memory state has already been updated. | Callers can't tell a failed save from success. Memory and S3 can silently diverge. |
-| R8 | `rag/inverted_index/inverted_index.py:64-75` | `save()` logs and swallows every storage error without returning or raising anything. | A failed save is invisible to the caller. |
+| R8 | `rag/inverted_index/inverted_index.py:63-81` | `save()` logs and swallows every storage error without returning or raising anything. | A failed save is invisible to the caller. |
 | R9 | `rag/semantic_index/semantic_index.py:14,44` | `docmap` is never cleared between builds. | Documents that are deleted can still be returned by search for the lifetime of the `SemanticIndex` instance. |
 | R10 | `rag/custom_types/db_types.py` vs `rag/custom_types/custom_types.py` | `DbUser` (mirrors the DB) and `User` (used by `Storage`) have unrelated fields. `User` has AWS/bucket fields the database doesn't. | Two diverging user models, with no defined mapping from the DB row to what `Storage` needs. |
 | R11 | `rag/rag/rag.py:45` | `generate` is typed `Callable[[str, str], Awaitable[str]]`, but `llm_ollama` and `llm_bedrock` return `str \| None`. | The type hints don't match the providers. `None` is handled at runtime but hidden from the type checker. |
@@ -46,6 +47,10 @@ This file records problems found in code review. It lists issues only, with no f
 | R18 | `rag/server.py` | Empty stub (`if __name__ == "__main__": pass`). |
 | R19 | `rag/` | No `pyproject.toml` / `uv.lock`. The `uv` + Ruff workflow in `CLAUDE.md` can't run (`uv run ruff` fails). Dependencies are in the root `requirements.txt`, which lacks `moto`, `pytest-asyncio`, `ollama`. |
 | R20 | `rag/test/` | No unit tests for `InvertedIndex`, `SemanticIndex`, `HybridSearch`, chunking helpers, `llm_ollama`, or `llm_bedrock`. They are only exercised through one e2e test. |
+| R22 | `rag/inverted_index/inverted_index.py:117` | `get_bm25_tf` recomputes `get_avg_doc_length()` (a pass over all documents) for every matching (token, document) pair. A search costs O(matches × documents), even though the average only changes when documents change. |
+| R23 | `rag/inverted_index/inverted_index.py:77-81` | `except ResponseError` in `save()` is unreachable: `Storage.upload_data` already catches every Redis error. |
+| R24 | `rag/inverted_index/inverted_index.py:71,75,79` | Typo "occured" in the three `save()` log messages. |
+| R25 | `rag/inverted_index/inverted_index.py:22,57,63,84,134` | Missing type hints: `docmap` is untyped, and `build`, `save`, `load`, `bm25_search` have no return types. `CLAUDE.md` requires full type hints. |
 
 ---
 
@@ -96,9 +101,9 @@ This file records problems found in code review. It lists issues only, with no f
 
 | Area | High | Medium | Low |
 |------|------|--------|-----|
-| RAG (Python) | 3 | 9 | 8 |
+| RAG (Python) | 4 | 9 | 12 |
 | API (Go) | 3 | 5 | 5 |
 | Database & Stack | 0 | 2 | 2 |
-| **Total** | **6** | **16** | **15** |
+| **Total** | **7** | **16** | **19** |
 
-Suggested order to address: R1, R3, A1/A2, A3, R2, R4, A4.
+Suggested order to address: R1, R3, R21, A1/A2, A3, R2, R4, A4.
