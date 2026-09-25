@@ -1,0 +1,25 @@
+[project]
+name = "blightsanest-rag"
+version = "0.1.0"
+description = "BlightSanest RAG service: per-user hybrid search (BM25 + semantic) and LLM answers"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3==1.43.31",
+    "botocore==1.43.31",
+    "msgpack-python==0.5.6",
+    "nltk==3.9.4",
+    "numpy==2.4.6",
+    "ollama==0.6.2",
+    "pydantic==2.13.4",
+    "redis==8.0.0",
+    "sentence-transformers==5.6.0",
+]
+
+[dependency-groups]
+dev = [
+    "moto>=5.2.3",
+    "pytest==9.1.0",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.9",
+]

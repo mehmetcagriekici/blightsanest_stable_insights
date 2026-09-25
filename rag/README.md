@@ -48,7 +48,7 @@ query ─▶ HybridSearch (load indexes) ─▶ BM25 + semantic ─▶ RRF ─�
 | `semantic_index/` | `SemanticIndex`: `all-MiniLM-L6-v2` embeddings (384-dim) over sentence chunks (4 sentences, 1 overlapping). Chunk metadata: `document_id`, `chunk_index`, `total_chunks`. A document's score is its best chunk's cosine similarity; chunks resolve to documents through `docmap` by `document_id`. |
 | `search/` | `HybridSearch`: loads both indexes for a user, fuses BM25 and semantic ranks with RRF (k = 60) over the union of results. Default limit 50. |
 | `rag/` | `RAG`: prompt construction and JSON response parsing. The LLM function is injected via the constructor; `RAG` never selects a provider. |
-| `llm/` | LLM providers with the signature `async (user_content, system_content) -> str \| None`. `ollama.py` → `llm_ollama` (development); `bedrock.py` → `llm_bedrock` (production, Converse API). |
+| `llm/` | LLM providers with the signature `async (user_content, system_content) -> str \| None`. `ollama_provider.py` → `llm_ollama` (development); `bedrock.py` → `llm_bedrock` (production, Converse API). |
 | `storage/` | `Storage`: `upload_data(name, data)` writes to S3 then Redis (TTL 3600s); `load_data(name)` reads Redis first, falls back to S3. Redis errors are logged and never fatal. |
 | `type_converter/` | `TypeConverter`: MessagePack serialization with a type registry for set, tuple, Counter, OrderedDict, defaultdict, numpy arrays, and registered Pydantic models. |
 | `custom_types/` | Pydantic models: `Document`, `User`, `RagResponse` (`custom_types.py`); `DbUser`, `DbDocument` mirroring DB rows (`db_types.py`). |
@@ -96,12 +96,17 @@ Redis defaults to `localhost:6379` (constructor arguments of `Storage`). The Oll
 import asyncio
 
 from custom_types.custom_types import Document, User
-from llm.ollama import llm_ollama
+from llm.ollama_provider import llm_ollama
 from rag.rag import RAG
 from search.hybrid_search import HybridSearch
 
-user = User(id="user_123", aws_access_key_id="...", aws_secret_access_key="...",
-            region="us-east-1", bucket_name="my-bucket")
+user = User(
+    id="user_123",
+    aws_access_key_id="...",
+    aws_secret_access_key="...",
+    region="us-east-1",
+    bucket_name="my-bucket",
+)
 docs = [Document(id="doc1", content="Today I felt anxious about my presentation.")]
 
 search = HybridSearch(user, docs)
@@ -116,7 +121,14 @@ print(answer.status, answer.response)
 
 ## Development
 
-Requirements: Python 3.12 (`.python-version`). Dependencies are currently listed in the root `requirements.txt`; the `uv` + `pyproject.toml` setup described in `CLAUDE.md` is not in place yet.
+Requirements: Python 3.12 (`.python-version`) and [uv](https://docs.astral.sh/uv/). Dependencies are declared in `pyproject.toml` and pinned in `uv.lock`; test and lint tools (pytest, pytest-asyncio, moto, ruff) are in the `dev` group, which `uv sync` installs by default.
+
+```bash
+cd rag
+uv sync                  # creates rag/.venv from uv.lock
+uv add <package>         # add a runtime dependency
+uv add --dev <package>   # add a test/lint dependency
+```
 
 Importing `helpers` downloads the NLTK `punkt_tab` and `stopwords` data on first run, so it needs network access.
 
@@ -130,8 +142,8 @@ docker-compose up -d redis ollama   # from the repo root
 
 ```bash
 cd rag
-pytest
-pytest test/test_rag.py::TestRagEnd2End::test_full_pipeline -q
+uv run pytest
+uv run pytest test/test_rag.py::TestRagEnd2End::test_full_pipeline -q
 ```
 
 | File | Covers |

@@ -215,11 +215,13 @@ Storage uses:
 
 Register new serializable types when introducing them.
 
+Dependencies are declared in `rag/pyproject.toml` and locked in `rag/uv.lock`. Add them with `uv add <pkg>` (or `uv add --dev <pkg>` for test/lint tools); never edit the lock file by hand.
+
 Run before committing:
 
 ```bash
-ruff check .
-ruff format --check .
+uv run ruff check .
+uv run ruff format --check .
 ```
 
 ---
@@ -311,10 +313,10 @@ Repository tests should run against real PostgreSQL using Docker Compose.
 ```bash
 cd rag
 uv sync
-ruff check .
-ruff format --check .
-pytest
-pytest test/test_rag.py::TestRagEnd2End::test_full_pipeline -q
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+uv run pytest test/test_rag.py::TestRagEnd2End::test_full_pipeline -q
 ```
 
 ## Go
@@ -331,8 +333,9 @@ go run ./cmd/api
 
 ```bash
 cd migrations
-alembic upgrade head
-alembic revision --autogenerate -m "message"
+uv sync                     # sqlalchemy, alembic, psycopg2 (migrations/pyproject.toml)
+uv run alembic upgrade head
+uv run alembic revision --autogenerate -m "message"
 ```
 
 ## Local Stack

@@ -80,7 +80,7 @@
 #### 2.1.9 Local Development Environment
 - ✅ Docker Compose: PostgreSQL 15 Alpine, Redis 7 Alpine, Ollama — shared `blightsanest_network`
   - RAG, API, PubSub services present but commented out (no Dockerfiles yet)
-- ✅ Python 3.12 (`rag/.python-version`), dependencies in root `requirements.txt`
+- ✅ Python 3.12 (`rag/.python-version`), dependencies managed with `uv` (`rag/pyproject.toml` + `rag/uv.lock`)
 
 ### 2.2 What Remains for Phase 1 ⏳
 
@@ -104,7 +104,7 @@
 - ⏳ Tests for `llm_ollama` / `llm_bedrock`
 
 #### 2.2.5 Tooling & Production Readiness
-- ⏳ Move to `uv` + `pyproject.toml` + Ruff as specified in `CLAUDE.md` (no `pyproject.toml` / `uv.lock` yet)
+- ✅ `uv` + `pyproject.toml` with Ruff in the `dev` group (no project Ruff config yet)
 - ⏳ Structured logging (module loggers instead of `botocore.client.logging` / `print`)
 - ⏳ gRPC server (`rag/server.py` is currently an empty stub) — see Phase 4
 - ⏳ Error handling: missing indexes, S3 timeouts, Bedrock throttling, empty result sets
@@ -392,7 +392,6 @@ Phase 2 (DB)  ──┼─→ Phase 3 (API) → Phase 4 (gRPC) → Phase 5 (PubS
 2. `users/{user_id}/` key prefix and chunk-metadata migration
 3. Remove index building from the `HybridSearch` query path
 4. Unit tests for BM25, semantic index, RRF
-5. `uv` + `pyproject.toml` + Ruff
 
 ### 10.3 Phase 3 Next Actions
 
@@ -450,19 +449,19 @@ blightsanest_stable_insights/
 │   ├── search/                  # Hybrid search (RRF)
 │   ├── storage/                 # S3 + Redis layer
 │   ├── type_converter/          # MessagePack TypeConverter
-│   ├── llm/                     # ollama.py, bedrock.py
+│   ├── llm/                     # ollama_provider.py, bedrock.py
 │   ├── custom_types/            # Pydantic models
 │   ├── helpers/, constants/
 │   ├── server.py                # gRPC server stub (empty)
 │   ├── test/
-│   └── pytest.ini
+│   ├── pytest.ini
+│   └── pyproject.toml, uv.lock  # uv-managed dependencies
 ├── api/                          # Go API service
 │   ├── cmd/api/                 # main, server, logger
 │   └── internal/{config,domain}/
 ├── models/                       # SQLAlchemy models
-├── migrations/                   # Alembic
+├── migrations/                   # Alembic (own pyproject.toml + uv.lock)
 ├── docker-compose.yml
-├── requirements.txt
 └── CLAUDE.md
 ```
 
