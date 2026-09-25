@@ -1,11 +1,13 @@
 import json
-from moto import mock_aws
+
 import boto3
 import pytest
+from moto import mock_aws
 
+from custom_types.custom_types import Document
 from rag.rag import RAG
 from search.hybrid_search import HybridSearch
-from custom_types.custom_types import Document
+
 
 class TestRagEnd2End:
     """Test entire RAG system working together"""
@@ -57,10 +59,12 @@ class TestRagEnd2End:
 
             # --- PHASE 4: RAG ---
             async def mock_generate(user_prompt: str, system_prompt: str) -> str:
-                return json.dumps({
-                    "status": "found",
-                    "response": "You felt anxious about your presentation."
-                })
+                return json.dumps(
+                    {
+                        "status": "found",
+                        "response": "You felt anxious about your presentation.",
+                    }
+                )
 
             rag = RAG(generate=mock_generate)
             rag_results = await rag.rag("What made me anxious?", retrieved_documents)

@@ -1,8 +1,9 @@
-import pytest
 import boto3
+import pytest
 from moto import mock_aws
 from redis import Redis
-from custom_types.custom_types import User, Document
+
+from custom_types.custom_types import Document, User
 
 
 @pytest.fixture
@@ -13,6 +14,7 @@ def mock_s3_bucket():
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket="test_bucket")
         yield s3
+
 
 @pytest.fixture
 def mock_user():
@@ -25,6 +27,7 @@ def mock_user():
         bucket_name="test_bucket",
     )
 
+
 @pytest.fixture
 def mock_documents():
     """Create test journal entries"""
@@ -34,6 +37,7 @@ def mock_documents():
         Document(id="doc3", content="Had a productive meeting with the team"),
         Document(id="doc4", content="Struggled with focus today"),
     ]
+
 
 @pytest.fixture
 def redis_connection():

@@ -1,27 +1,28 @@
-from collections import defaultdict
 import json
 import re
-import numpy as np
-import nltk
-
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import cast
 
+import nltk
+import numpy as np
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 
-nltk.download('punkt_tab')
-nltk.download('stopwords')
+nltk.download("punkt_tab")
+nltk.download("stopwords")
+stop_words = set(stopwords.words("english"))
+
 
 # parse json
 def parse_json(data):
     return json.loads(data)
 
+
 # helper function to tokenize a string
 def tokenize(text: str) -> list[str]:
-    stop_words = set(stopwords.words("english"))
-    tokens = word_tokenize(text)
-    return [w.lower() for w in tokens if w.lower() not in stop_words]
+    tokens = [w.lower() for w in word_tokenize(text)]
+    return [w for w in tokens if w not in stop_words]
+
 
 # helper function to calculate cosine similarity
 def cosine_similarity(v1, v2) -> float:
@@ -32,9 +33,16 @@ def cosine_similarity(v1, v2) -> float:
         return 0.0
     return dot_product / (norm1 * norm2)
 
+
 # helper function to chunk texts
 # base function
 def base_chunk(words: list[str], chunk_size: int, overlap: int) -> list[str]:
+    # guard rail
+    if chunk_size <= 0 or not 0 <= overlap < chunk_size:
+        raise ValueError(
+            "chunk_size must be positive and overlap must satisfy 0 <= overlap < chunk_size"
+        )
+
     # keep track of the chunking
     pivot = 0
     # chunk start
@@ -77,7 +85,7 @@ def base_chunk(words: list[str], chunk_size: int, overlap: int) -> list[str]:
 
     return chunks
 
-    
+
 # improved semantic chunk, built on the base
 def semantic_chunk(text: str, size: int, overlap: int) -> list[str]:
     # remove gaps
@@ -92,54 +100,29 @@ def semantic_chunk(text: str, size: int, overlap: int) -> list[str]:
         sentences = [text]
     return base_chunk(sentences, size, overlap)
 
+
 # function to calculate rrf score
 def calc_rrf_score(rank: int, k: int = 60) -> float:
     return 1 / (rank + k)
+
 
 # helper functions to serialize and deserialize defaultdicts for type conversion with factory handling
 def defaultdict_serializer(d: defaultdict):
     factory = d.default_factory
     factory_name = getattr(factory, "__name__", str(factory)) if factory else None
     return {
-            "factory": factory_name,
-            "value": dict(d),
-            }
+        "factory": factory_name,
+        "value": dict(d),
+    }
+
 
 def defaultdict_deserializer(data: dict):
     factory_name = data.get("factory")
     inner = data.get("value", {})
-    
+
     # check for counter
     if factory_name == "Counter":
         return defaultdict(Counter, inner)
 
     # default return
     return defaultdict(dict, inner)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

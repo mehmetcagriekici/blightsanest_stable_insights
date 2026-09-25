@@ -1,9 +1,11 @@
 from pydantic import BaseModel
 
+
 # default document model before building the microservices
 class Document(BaseModel):
     id: str
     content: str
+
 
 # RAG response
 class RagResponse(BaseModel):
@@ -13,7 +15,8 @@ class RagResponse(BaseModel):
     status: str
     response: str
 
-# default user for development 
+
+# default user for development
 class User(BaseModel):
     id: str
     aws_access_key_id: str

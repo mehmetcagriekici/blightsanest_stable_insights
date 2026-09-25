@@ -1,13 +1,12 @@
+from collections import Counter, OrderedDict, defaultdict
+from collections.abc import Callable
 from typing import Any
+
 import msgpack
 import numpy as np
-from collections.abc import Callable
-from collections import Counter, OrderedDict, defaultdict
-
 from pydantic import BaseModel
 
 from helpers.helpers import defaultdict_deserializer, defaultdict_serializer
-
 
 
 # half dynamic class to help type conversions for msgpack
@@ -24,7 +23,7 @@ class TypeConverter:
 
         # register handlers
         self.register_handlers()
-       
+
     # serialize data with msgpack
     def serialize(self, data):
         return msgpack.packb(self.convert_to_serializable(data))
@@ -36,7 +35,9 @@ class TypeConverter:
     # register types
     # register a type to their serializer and deserializer
     # handle pydantic models during the conversion recursion
-    def register_types(self, type_name: str, serializer: Callable, deserializer: Callable):
+    def register_types(
+        self, type_name: str, serializer: Callable, deserializer: Callable
+    ):
         self.serializers[type_name] = serializer
         self.deserializers[type_name] = deserializer
 
@@ -44,45 +45,47 @@ class TypeConverter:
     def register_handlers(self):
         # register sets
         self.register_types(
-                "set",
-                lambda s: list(s), # convert set to list to serialize
-                lambda d: set(d), # convert list to set after deserializing
-                )
+            "set",
+            lambda s: list(s),  # convert set to list to serialize
+            lambda d: set(d),  # convert list to set after deserializing
+        )
 
         # register tuples
         self.register_types(
-                "tuple",
-                lambda s: list(s),
-                lambda d: tuple(d),
-                )
-        
+            "tuple",
+            lambda s: list(s),
+            lambda d: tuple(d),
+        )
+
         # register ordered dicts
         self.register_types(
-                "ordereddict",
-                lambda s: list(s.items()),
-                lambda d: OrderedDict(d),
-                )
+            "ordereddict",
+            lambda s: list(s.items()),
+            lambda d: OrderedDict(d),
+        )
 
         # register counter to a ordinary dict to be recursively serialized
         self.register_types(
-                "counter",
-                lambda s: dict(s),
-                lambda d: Counter(d),
-                )
+            "counter",
+            lambda s: dict(s),
+            lambda d: Counter(d),
+        )
 
         # register numpy arrays
         self.register_types(
-                "numpy",
-                lambda arr: {
-                    "dtype": str(arr.dtype),
-                    "shape": arr.shape,
-                    "value": arr.tolist(),
-                    },
-                lambda d: np.array(d["value"], dtype=d["dtype"]).reshape(d["shape"]),
-                )
+            "numpy",
+            lambda arr: {
+                "dtype": str(arr.dtype),
+                "shape": arr.shape,
+                "value": arr.tolist(),
+            },
+            lambda d: np.array(d["value"], dtype=d["dtype"]).reshape(d["shape"]),
+        )
 
         # register defaultdicts
-        self.register_types("defaultdict", defaultdict_serializer, defaultdict_deserializer)
+        self.register_types(
+            "defaultdict", defaultdict_serializer, defaultdict_deserializer
+        )
 
     # register used pydantic models for round-tripping
     def register_pydantic_models(self, model_class: type[BaseModel]):
@@ -107,50 +110,63 @@ class TypeConverter:
             # metadata
             name = data.__class__.__name__
             # value pydantic models initiated at the storage __init__
-            content = self.serializers[name](data) if name in self.serializers else data.model_dump()
-            return {"__blightsanest_type__": name, "value": self.convert_to_serializable(content)}
-        
+            content = (
+                self.serializers[name](data)
+                if name in self.serializers
+                else data.model_dump()
+            )
+            return {
+                "__blightsanest_type__": name,
+                "value": self.convert_to_serializable(content),
+            }
+
         # sets
         if isinstance(data, set):
             return {
-                    "__blightsanest_type__": "set", 
-                    "value": self.convert_to_serializable(self.serializers["set"](data)),
-                    }
+                "__blightsanest_type__": "set",
+                "value": self.convert_to_serializable(self.serializers["set"](data)),
+            }
 
         # tuples
         if isinstance(data, tuple):
             return {
-                    "__blightsanest_type__": "tuple",
-                    "value": self.convert_to_serializable(self.serializers["tuple"](data)),
-                    }
+                "__blightsanest_type__": "tuple",
+                "value": self.convert_to_serializable(self.serializers["tuple"](data)),
+            }
 
         # ordereddicts
         if isinstance(data, OrderedDict):
             return {
-                    "__blightsanest_type__": "ordereddict",
-                    "value": self.convert_to_serializable(self.serializers["ordereddict"](data)),
-                    }
+                "__blightsanest_type__": "ordereddict",
+                "value": self.convert_to_serializable(
+                    self.serializers["ordereddict"](data)
+                ),
+            }
 
         # defaultdict
         if isinstance(data, defaultdict):
             return {
-                    "__blightsanest_type__": "defaultdict",
-                    "value": self.convert_to_serializable(self.serializers["defaultdict"](data)),
-                    }
+                "__blightsanest_type__": "defaultdict",
+                "value": self.convert_to_serializable(
+                    self.serializers["defaultdict"](data)
+                ),
+            }
 
         # counters
         if isinstance(data, Counter):
             return {
-                    "__blightsanest_type__": "counter",
-                    "value": self.convert_to_serializable(self.serializers["counter"](data)),
-                    }
+                "__blightsanest_type__": "counter",
+                "value": self.convert_to_serializable(
+                    self.serializers["counter"](data)
+                ),
+            }
 
         # numpy arrays
         if isinstance(data, np.ndarray):
             return {
-                    "__blightsanest_type__": "numpy",
-                    "value": self.serializers["numpy"](data),
-                    }
+                "__blightsanest_type__": "numpy",
+                "value": self.serializers["numpy"](data),
+            }
 
         # for nested dicts and list with complex types - list with sets etc. -
         # check every element
@@ -183,34 +199,3 @@ class TypeConverter:
 
         # for unmatched instances, just return the data
         return data
- 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

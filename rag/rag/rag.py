@@ -1,8 +1,9 @@
 # blightsanest RAG
 import json
 from collections.abc import Awaitable, Callable
-from helpers.helpers import parse_json
+
 from custom_types.custom_types import Document, RagResponse
+from helpers.helpers import parse_json
 
 
 class RAG:
@@ -51,7 +52,9 @@ class RAG:
         formatted_documents = "\n\n".join(
             f"[{document.id}] {document.content}" for document in retrieved_documents
         )
-        user_prompt = self.USER_PROMPT_TEMPLATE.format(query=query, retrieved_documents=formatted_documents)
+        user_prompt = self.USER_PROMPT_TEMPLATE.format(
+            query=query, retrieved_documents=formatted_documents
+        )
         response = await self.generate(user_prompt, self.SYSTEM_PROMPT)
         if response is None:
             raise ValueError("llm did not produce any response")
@@ -64,21 +67,3 @@ class RAG:
             raise ValueError("invalid llm response")
 
         return RagResponse(**data)
-
-
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

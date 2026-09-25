@@ -1,6 +1,8 @@
 from datetime import datetime
 from uuid import UUID
+
 from pydantic import BaseModel
+
 
 # database types
 # user
@@ -11,6 +13,7 @@ class DbUser(BaseModel):
     hashed_password: str
     created_at: datetime
     updated_at: datetime
+
 
 # document
 class DbDocument(BaseModel):

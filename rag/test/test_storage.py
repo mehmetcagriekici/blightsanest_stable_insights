@@ -1,8 +1,11 @@
-from botocore.exceptions import ClientError
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
+from botocore.exceptions import ClientError
 from redis import ResponseError
+
 from storage.storage import Storage
+
 
 # mock user
 @pytest.fixture
@@ -12,21 +15,22 @@ def mock_user():
     user.bucket_name = "test_bucket"
     return user
 
+
 # mock storage
 @pytest.fixture
 def storage(mock_user):
-    with patch("storage.storage.redis.Redis"),\
-            patch("storage.storage.boto3.client"):
-                # init storage
-                s = Storage(mock_user)
+    with patch("storage.storage.redis.Redis"), patch("storage.storage.boto3.client"):
+        # init storage
+        s = Storage(mock_user)
 
-                # mock storage attrs
-                s.redis_connection = Mock()
-                s.s3_client = Mock()
-                s.type_converter = Mock()
-                s.redis_ttl = 3600
+        # mock storage attrs
+        s.redis_connection = Mock()
+        s.s3_client = Mock()
+        s.type_converter = Mock()
+        s.redis_ttl = 3600
 
-                return s
+        return s
+
 
 # test storage initialization
 class TestStorageInitialization:
@@ -35,6 +39,7 @@ class TestStorageInitialization:
     def test_registers_models(self, mock_boto, mock_redis, mock_user):
         s = Storage(mock_user)
         assert s.type_converter is not None
+
 
 # test while uploading data
 class TestUploadData:
@@ -47,17 +52,17 @@ class TestUploadData:
 
         # test s3
         storage.s3_client.put_object.assert_called_once_with(
-                Bucket="test_bucket",
-                Key="user1/doc.pkl",
-                Body=b"serialized",
-                )
+            Bucket="test_bucket",
+            Key="user1/doc.pkl",
+            Body=b"serialized",
+        )
 
         # test redis
         storage.redis_connection.set.assert_called_once_with(
-                name="user1/doc.pkl",
-                value=b"serialized",
-                ex=storage.redis_ttl,
-                )
+            name="user1/doc.pkl",
+            value=b"serialized",
+            ex=storage.redis_ttl,
+        )
 
     # test empty serialization
     # must raise value error
@@ -73,9 +78,9 @@ class TestUploadData:
         storage.type_converter.serialize.return_value = b"serialized"
         # s3 client error
         storage.s3_client.put_object.side_effect = ClientError(
-                {"Error": {"Code": "500"}},
-                "PutObject",
-                )
+            {"Error": {"Code": "500"}},
+            "PutObject",
+        )
         with pytest.raises(ClientError):
             storage.upload_data("doc.pkl", {"a": 1})
 
@@ -90,12 +95,11 @@ class TestUploadData:
         storage.s3_client.put_object.return_value = None
 
         # redis raises on set
-        storage.redis_connection.set.side_effect = ResponseError(
-                "redis failure"
-                )
+        storage.redis_connection.set.side_effect = ResponseError("redis failure")
         # should not raise - s3 (source of truth) already succeeded
         storage.upload_data("doc.pkl", {"a": 1})
         storage.s3_client.put_object.assert_called_once()
+
 
 # test while loading data
 class TestLoadData:
@@ -118,9 +122,7 @@ class TestLoadData:
         # creae a mock body to exist in s3
         body = Mock()
         body.read.return_value = b"s3data"
-        storage.s3_client.get_object.return_value = {
-                "Body": body
-                }
+        storage.s3_client.get_object.return_value = {"Body": body}
         # valid deserialized value
         storage.type_converter.deserialize.return_value = {"x": 1}
         # get the result from the storage
@@ -135,9 +137,9 @@ class TestLoadData:
         storage.redis_connection.get.return_value = None
         # create a client error for s3
         storage.s3_client.get_object.side_effect = ClientError(
-                {"Error": {"Code": "NoSuchKey"}},
-                "GetObject",
-                )
+            {"Error": {"Code": "NoSuchKey"}},
+            "GetObject",
+        )
         # get the result from the storage, must be none
         result = storage.load_data("doc.pkl")
         assert result is None

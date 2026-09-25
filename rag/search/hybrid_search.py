@@ -1,8 +1,9 @@
 from constants.constants import SEARCH_LIMIT
-from helpers.helpers import calc_rrf_score
-from semantic_index.semantic_index import SemanticIndex
-from inverted_index.inverted_index import InvertedIndex
 from custom_types.custom_types import Document, User
+from helpers.helpers import calc_rrf_score
+from inverted_index.inverted_index import InvertedIndex
+from semantic_index.semantic_index import SemanticIndex
+
 
 # blightsanest main search engine
 class HybridSearch:
@@ -13,7 +14,7 @@ class HybridSearch:
         self.semantic_index = SemanticIndex(current_user)
         # inverted_index
         self.inverted_index = InvertedIndex(current_user)
-        
+
         # local development
         # load the semantic_index
         self.semantic_index.create_or_load_chunk_embeddings(documents)
@@ -42,7 +43,9 @@ class HybridSearch:
         # get semantic search results
         semantic_results = self.semantic_search(query, limit)
         # sort semantic results
-        semantic_results = sorted(semantic_results, key=lambda score: score["score"], reverse=True)
+        semantic_results = sorted(
+            semantic_results, key=lambda score: score["score"], reverse=True
+        )
         # from semantic scores create ranks and keep a lookup for content/metadata
         semantic_ranks = {}
         semantic_by_id = {}
@@ -77,44 +80,15 @@ class HybridSearch:
                 content = document.content if document is not None else ""
 
             # create the rrf score object and append it to the scores
-            rrf_scores.append({
-                "doc_id": doc_id,
-                "content": content,
-                "bm25_rank": bm25_rank,
-                "semantic_rank": semantic_rank,
-                "rrf_score": rrf_score,
-                })
+            rrf_scores.append(
+                {
+                    "doc_id": doc_id,
+                    "content": content,
+                    "bm25_rank": bm25_rank,
+                    "semantic_rank": semantic_rank,
+                    "rrf_score": rrf_score,
+                }
+            )
 
         # sort the rrf scores
         return sorted(rrf_scores, key=lambda score: score["rrf_score"], reverse=True)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

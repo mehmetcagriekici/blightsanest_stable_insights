@@ -1,10 +1,9 @@
-import pytest
-
-import numpy as np
 from collections import Counter, OrderedDict, defaultdict
 
-from type_converter.type_converter import TypeConverter
+import numpy as np
+
 from custom_types.custom_types import Document
+from type_converter.type_converter import TypeConverter
 
 
 class TestTypeConverterBasicTypes:
@@ -108,10 +107,10 @@ class TestTypeConverterBasicTypes:
         original["doc1"]["word1"] = 5
         original["doc1"]["word2"] = 3
         original["doc2"]["word1"] = 2
-        
+
         serialized = converter.serialize(original)
         restored = converter.deserialize(serialized)
-        
+
         assert restored["doc1"]["word1"] == 5
         assert restored["doc1"]["word2"] == 3
         assert restored["doc2"]["word1"] == 2
@@ -122,10 +121,10 @@ class TestTypeConverterBasicTypes:
         converter = TypeConverter()
         original = defaultdict(dict)
         original["key1"]["nested"] = "value"
-        
+
         serialized = converter.serialize(original)
         restored = converter.deserialize(serialized)
-        
+
         assert restored["key1"]["nested"] == "value"
         assert isinstance(restored, defaultdict)
 
@@ -139,7 +138,7 @@ class TestTypeConverterNestedStructures:
         original = {"my_set": {1, 2, 3}, "name": "test"}
         serialized = converter.serialize(original)
         restored = converter.deserialize(serialized)
-        
+
         assert restored["my_set"] == {1, 2, 3}
         assert restored["name"] == "test"
         assert isinstance(restored["my_set"], set)
@@ -150,7 +149,7 @@ class TestTypeConverterNestedStructures:
         original = [Counter({"a": 1}), Counter({"b": 2})]
         serialized = converter.serialize(original)
         restored = converter.deserialize(serialized)
-        
+
         assert restored[0] == Counter({"a": 1})
         assert restored[1] == Counter({"b": 2})
         assert isinstance(restored[0], Counter)
@@ -163,13 +162,13 @@ class TestTypeConverterNestedStructures:
                 "level2": {
                     "my_set": {1, 2, 3},
                     "my_tuple": (4, 5, 6),
-                    "my_counter": Counter({"x": 10})
+                    "my_counter": Counter({"x": 10}),
                 }
             }
         }
         serialized = converter.serialize(original)
         restored = converter.deserialize(serialized)
-        
+
         assert restored["level1"]["level2"]["my_set"] == {1, 2, 3}
         assert restored["level1"]["level2"]["my_tuple"] == (4, 5, 6)
         assert restored["level1"]["level2"]["my_counter"] == Counter({"x": 10})
@@ -180,11 +179,11 @@ class TestTypeConverterNestedStructures:
         original = {
             "array": np.array([1, 2, 3]),
             "set": {10, 20, 30},
-            "counter": Counter({"a": 5})
+            "counter": Counter({"a": 5}),
         }
         serialized = converter.serialize(original)
         restored = converter.deserialize(serialized)
-        
+
         np.testing.assert_array_equal(restored["array"], original["array"])
         assert restored["set"] == {10, 20, 30}
         assert restored["counter"] == Counter({"a": 5})
@@ -192,13 +191,10 @@ class TestTypeConverterNestedStructures:
     def test_list_of_tuples_with_sets(self):
         """Test list containing tuples containing sets."""
         converter = TypeConverter()
-        original = [
-            (1, {2, 3}),
-            (4, {5, 6})
-        ]
+        original = [(1, {2, 3}), (4, {5, 6})]
         serialized = converter.serialize(original)
         restored = converter.deserialize(serialized)
-        
+
         assert restored[0] == (1, {2, 3})
         assert restored[1] == (4, {5, 6})
         assert isinstance(restored[0][1], set)
@@ -210,19 +206,19 @@ class TestTypeConverterEdgeCases:
     def test_primitive_types_unchanged(self):
         """Test that primitives pass through correctly."""
         converter = TypeConverter()
-        
+
         # String
         assert converter.deserialize(converter.serialize("hello")) == "hello"
-        
+
         # Number
         assert converter.deserialize(converter.serialize(42)) == 42
-        
+
         # Float
         assert converter.deserialize(converter.serialize(3.14)) == 3.14
-        
+
         # Boolean
         assert converter.deserialize(converter.serialize(True)) is True
-        
+
         # None
         assert converter.deserialize(converter.serialize(None)) is None
 
@@ -262,7 +258,7 @@ class TestTypeConverterEdgeCases:
             "empty_set": set(),
             "empty_counter": Counter(),
             "empty_list": [],
-            "empty_dict": {}
+            "empty_dict": {},
         }
         restored = converter.deserialize(converter.serialize(original))
         assert restored["empty_set"] == set()
@@ -278,7 +274,7 @@ class TestTypeConverterPydanticModels:
         """Test that Pydantic models can be registered."""
         converter = TypeConverter()
         converter.register_pydantic_models(Document)
-        
+
         # Just verify no error on registration
         assert "Document" in converter.deserializers
 
@@ -286,11 +282,11 @@ class TestTypeConverterPydanticModels:
         """Test Document Pydantic model."""
         converter = TypeConverter()
         converter.register_pydantic_models(Document)
-        
+
         original = Document(id="doc1", content="This is a test document")
         serialized = converter.serialize(original)
         restored = converter.deserialize(serialized)
-        
+
         assert restored.id == original.id
         assert restored.content == original.content
         assert isinstance(restored, Document)
@@ -299,14 +295,14 @@ class TestTypeConverterPydanticModels:
         """Test list containing Pydantic models."""
         converter = TypeConverter()
         converter.register_pydantic_models(Document)
-        
+
         original = [
             Document(id="doc1", content="content1"),
-            Document(id="doc2", content="content2")
+            Document(id="doc2", content="content2"),
         ]
         serialized = converter.serialize(original)
         restored = converter.deserialize(serialized)
-        
+
         assert len(restored) == 2
         assert restored[0].id == "doc1"
         assert restored[1].id == "doc2"
@@ -316,14 +312,14 @@ class TestTypeConverterPydanticModels:
         """Test dict with Pydantic models as values."""
         converter = TypeConverter()
         converter.register_pydantic_models(Document)
-        
+
         original = {
             "first": Document(id="doc1", content="content1"),
-            "second": Document(id="doc2", content="content2")
+            "second": Document(id="doc2", content="content2"),
         }
         serialized = converter.serialize(original)
         restored = converter.deserialize(serialized)
-        
+
         assert isinstance(restored["first"], Document)
         assert isinstance(restored["second"], Document)
         assert restored["first"].id == "doc1"
@@ -337,17 +333,17 @@ class TestTypeConverterComplexRealWorld:
         """Test structure like InvertedIndex would produce."""
         converter = TypeConverter()
         converter.register_pydantic_models(Document)
-        
+
         # Simulate what InvertedIndex saves
         inverted_index = {
             "the": {"doc1", "doc2", "doc3"},
             "quick": {"doc1"},
-            "brown": {"doc1", "doc2"}
+            "brown": {"doc1", "doc2"},
         }
-        
+
         serialized = converter.serialize(inverted_index)
         restored = converter.deserialize(serialized)
-        
+
         assert restored["the"] == {"doc1", "doc2", "doc3"}
         assert restored["quick"] == {"doc1"}
         assert isinstance(restored["the"], set)
@@ -355,15 +351,15 @@ class TestTypeConverterComplexRealWorld:
     def test_term_frequencies_structure(self):
         """Test term_frequencies like InvertedIndex produces."""
         converter = TypeConverter()
-        
+
         term_frequencies = defaultdict(Counter)
         term_frequencies["doc1"]["the"] = 5
         term_frequencies["doc1"]["quick"] = 2
         term_frequencies["doc2"]["the"] = 3
-        
+
         serialized = converter.serialize(term_frequencies)
         restored = converter.deserialize(serialized)
-        
+
         assert restored["doc1"]["the"] == 5
         assert restored["doc1"]["quick"] == 2
         assert restored["doc2"]["the"] == 3
@@ -371,11 +367,11 @@ class TestTypeConverterComplexRealWorld:
     def test_semantic_index_chunk_metadata(self):
         """Test metadata structure like SemanticIndex produces."""
         converter = TypeConverter()
-        
+
         chunk_metadata = [
             {"document_id": "doc1", "chunk_index": 0, "total_chunks": 5},
             {"document_id": "doc1", "chunk_index": 1, "total_chunks": 5},
-            {"document_id": "doc2", "chunk_index": 0, "total_chunks": 3}
+            {"document_id": "doc2", "chunk_index": 0, "total_chunks": 3},
         ]
 
         serialized = converter.serialize(chunk_metadata)
@@ -388,13 +384,13 @@ class TestTypeConverterComplexRealWorld:
     def test_numpy_embeddings_array(self):
         """Test numpy arrays like SemanticIndex embeddings."""
         converter = TypeConverter()
-        
+
         # Simulate embedding matrix (10 docs, 384 dimensions)
         embeddings = np.random.randn(10, 384).astype(np.float32)
-        
+
         serialized = converter.serialize(embeddings)
         restored = converter.deserialize(serialized)
-        
+
         np.testing.assert_array_almost_equal(restored, embeddings)
         assert restored.shape == (10, 384)
         assert restored.dtype == np.float32
@@ -406,18 +402,14 @@ class TestTypeConverterRoundTrip:
     def test_multiple_roundtrips(self):
         """Test data survives multiple serialize/deserialize cycles."""
         converter = TypeConverter()
-        
-        original = {
-            "set": {1, 2, 3},
-            "counter": Counter({"a": 5}),
-            "tuple": (4, 5, 6)
-        }
-        
+
+        original = {"set": {1, 2, 3}, "counter": Counter({"a": 5}), "tuple": (4, 5, 6)}
+
         current = original
         for _ in range(5):
             serialized = converter.serialize(current)
             current = converter.deserialize(serialized)
-        
+
         assert current["set"] == original["set"]
         assert current["counter"] == original["counter"]
         assert current["tuple"] == original["tuple"]

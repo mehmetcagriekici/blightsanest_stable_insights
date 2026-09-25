@@ -1,13 +1,16 @@
 import asyncio
+import logging
 import os
 
 import boto3
-from botocore.client import logging
 from botocore.exceptions import BotoCoreError, ClientError
 
 # model id is the model-agnostic knob: any Converse-compatible model works
-region_name = os.getenv('AWS_REGION_NAME', 'us-east-1')
-model_id = os.getenv('BEDROCK_MODEL_ID', 'anthropic.claude-3-haiku-20240307-v1:0')
+region_name = os.getenv("AWS_REGION_NAME", "us-east-1")
+model_id = os.getenv("BEDROCK_MODEL_ID")
+
+logger = logging.getLogger(__name__)
+
 
 # production / containerized
 # async function to get an llm response from aws bedrock via the converse api
@@ -28,12 +31,12 @@ async def llm_bedrock(user_content: str, system_content: str) -> str | None:
             system=[{"text": system_content}],
         )
     except (BotoCoreError, ClientError) as e:
-        logging.error("bedrock converse call failed: %s", e)
+        logger.error("bedrock converse call failed: %s", e)
         return None
 
     # return None on a malformed response so RAG.rag's None guard can handle it
     try:
         return response["output"]["message"]["content"][0]["text"]
     except (KeyError, IndexError) as e:
-        logging.error("unexpected bedrock response shape: %s", e)
+        logger.error("unexpected bedrock response shape: %s", e)
         return None

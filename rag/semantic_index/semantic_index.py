@@ -1,14 +1,22 @@
-from botocore.client import ClientError, logging
+import logging
+
+from botocore.exceptions import ClientError
 from redis import ResponseError
 from sentence_transformers import SentenceTransformer
+
 from constants.constants import SEARCH_LIMIT
+from custom_types.custom_types import Document, User
 from helpers.helpers import cosine_similarity, semantic_chunk
 from storage.storage import Storage
-from custom_types.custom_types import Document, User
+
+logger = logging.getLogger(__name__)
+
 
 # semantic indexing class with chunking
 class SemanticIndex:
-    def __init__(self, current_user: User, model_name: str = "all-MiniLM-L6-v2") -> None:
+    def __init__(
+        self, current_user: User, model_name: str = "all-MiniLM-L6-v2"
+    ) -> None:
         self.model = SentenceTransformer(model_name)
         self.documents = None
         self.docmap = {}
@@ -17,7 +25,6 @@ class SemanticIndex:
 
         # storage for embeddings and metadata
         self.storage = Storage(current_user)
-
 
     # generate an embedding using the model for a text
     def generate_embedding(self, text: str):
@@ -54,10 +61,10 @@ class SemanticIndex:
                 chunks.append(curr_chunks[j])
                 # create chunk metada
                 metadata = {
-                        "document_id": document.id,
-                        "chunk_index": j,
-                        "total_chunks": len(curr_chunks),
-                        }
+                    "document_id": document.id,
+                    "chunk_index": j,
+                    "total_chunks": len(curr_chunks),
+                }
                 # add chunk metadata to chunk metadata
                 chunk_metadata.append(metadata)
 
@@ -65,7 +72,7 @@ class SemanticIndex:
         self.chunk_embeddings = self.model.encode(chunks)
         # assign chunk metadata
         self.chunk_metadata = chunk_metadata
-        
+
         # upload chunk embedings and chunk metadata to the storage
         try:
             # chunk embeddings
@@ -73,13 +80,21 @@ class SemanticIndex:
             # metadata
             self.storage.upload_data("chunk_metadata", self.chunk_metadata)
         except ValueError as e:
-            logging.error("a value error occured while trying to upload the semantic index: %s", e)
+            logger.error(
+                "a value error occured while trying to upload the semantic index: %s", e
+            )
             return None
         except ClientError as e:
-            logging.error("a client error occured while trying to upload the semantic index: %s", e)
+            logger.error(
+                "a client error occured while trying to upload the semantic index: %s",
+                e,
+            )
             return None
         except ResponseError as e:
-            logging.error("a response error occured while trying to upload the semantic index: %s", e)
+            logger.error(
+                "a response error occured while trying to upload the semantic index: %s",
+                e,
+            )
             return None
 
         return self.chunk_embeddings
@@ -90,7 +105,7 @@ class SemanticIndex:
         # iterate over the documents and create the docmap
         for i in range(len(self.documents)):
             self.docmap[self.documents[i].id] = self.documents[i]
-        
+
         # check if chunk embeddings and chunk metadata is already built
         chunk_embeddings = self.storage.load_data("chunk_embeddings")
         chunk_metadata = self.storage.load_data("chunk_metadata")
@@ -126,7 +141,9 @@ class SemanticIndex:
         # iterate over the chunks
         for i in range(len(self.chunk_embeddings)):
             # create a similarity score between the query embedding and current chunk embedding
-            similarity_score = cosine_similarity(query_embedding, self.chunk_embeddings[i])
+            similarity_score = cosine_similarity(
+                query_embedding, self.chunk_embeddings[i]
+            )
             # get chunk metadata
             metadata = self.chunk_metadata[i]
             # if the document score does not exist create a new one
@@ -137,7 +154,9 @@ class SemanticIndex:
                 document_scores[metadata["document_id"]] = similarity_score
 
         # get the top documents using the limit
-        top_documents = sorted(document_scores.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+        top_documents = sorted(
+            document_scores.items(), key=lambda kv: kv[1], reverse=True
+        )[:limit]
         # from the top documents create the result that will be sent
         results = []
         for kv in top_documents:
@@ -148,49 +167,18 @@ class SemanticIndex:
             document = self.docmap.get(document_id)
             if document is None:
                 continue
-            metadata = list(filter(lambda d: d["document_id"] == document_id, self.chunk_metadata))
+            metadata = list(
+                filter(lambda d: d["document_id"] == document_id, self.chunk_metadata)
+            )
             # get the first metadata
             if len(metadata) > 0:
                 metadata = metadata[0]
             result = {
-                    "id": document.id,
-                    "content": document.content,
-                    "score": round(kv[1], 4),
-                    "metadata": metadata or {},
-                    }
+                "id": document.id,
+                "content": document.content,
+                "score": round(kv[1], 4),
+                "metadata": metadata or {},
+            }
             results.append(result)
 
         return results
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
