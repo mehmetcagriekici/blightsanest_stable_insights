@@ -1,0 +1,12 @@
+# Workspace root: one uv.lock and one .venv for every Python project in the repo.
+# Each member keeps its own pyproject.toml with its own dependencies.
+[tool.uv.workspace]
+members = ["rag", "migrations"]
+
+[tool.pyright]
+# Type-check against the shared workspace environment, even when another
+# virtualenv is active in the shell.
+venvPath = "."
+venv = ".venv"
+# rag/ modules import each other as top-level packages (e.g. `storage.storage`).
+executionEnvironments = [{ root = "rag" }]

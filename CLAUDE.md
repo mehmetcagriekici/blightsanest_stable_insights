@@ -161,6 +161,9 @@ migrations/           # Alembic
 api/                  # Go API
 pubsub/               # Go PubSub
 docker-compose.yml
+pyproject.toml        # uv workspace root (members: rag, migrations)
+uv.lock               # single lock file for all Python members
+.venv/                # single shared Python environment
 ```
 
 ---
@@ -215,7 +218,9 @@ Storage uses:
 
 Register new serializable types when introducing them.
 
-Dependencies are declared in `rag/pyproject.toml` and locked in `rag/uv.lock`. Add them with `uv add <pkg>` (or `uv add --dev <pkg>` for test/lint tools); never edit the lock file by hand.
+Python projects form a uv workspace: the root `pyproject.toml` lists `rag` and `migrations` as members, and they share one `uv.lock` and one `.venv` at the repo root. Each member declares its own dependencies in its own `pyproject.toml`. Add them from inside the member folder with `uv add <pkg>` (or `uv add --dev <pkg>` for test/lint tools); never edit the lock file by hand.
+
+Run `uv sync` from the repo root only. Inside a member folder it syncs just that member and uninstalls the other members' packages. `uv run` is safe anywhere.
 
 Run before committing:
 
@@ -311,8 +316,8 @@ Repository tests should run against real PostgreSQL using Docker Compose.
 ## Python
 
 ```bash
+uv sync                     # from the repo root: installs every member into .venv
 cd rag
-uv sync
 uv run ruff check .
 uv run ruff format --check .
 uv run pytest
@@ -332,8 +337,7 @@ go run ./cmd/api
 ## Database
 
 ```bash
-cd migrations
-uv sync                     # sqlalchemy, alembic, psycopg2 (migrations/pyproject.toml)
+cd migrations              # after `uv sync` at the repo root
 uv run alembic upgrade head
 uv run alembic revision --autogenerate -m "message"
 ```

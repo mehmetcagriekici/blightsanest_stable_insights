@@ -121,14 +121,16 @@ print(answer.status, answer.response)
 
 ## Development
 
-Requirements: Python 3.12 (`.python-version`) and [uv](https://docs.astral.sh/uv/). Dependencies are declared in `pyproject.toml` and pinned in `uv.lock`; test and lint tools (pytest, pytest-asyncio, moto, ruff) are in the `dev` group, which `uv sync` installs by default.
+Requirements: Python 3.12 (repo-root `.python-version`) and [uv](https://docs.astral.sh/uv/). This folder is a member of the repo's uv workspace. Its dependencies are declared in `rag/pyproject.toml`, but they are locked in the root `uv.lock` and installed into the shared root `.venv`. Test and lint tools (pytest, pytest-asyncio, moto, ruff) are in the `dev` group.
 
 ```bash
+uv sync                  # from the repo root: installs all members into .venv
 cd rag
-uv sync                  # creates rag/.venv from uv.lock
-uv add <package>         # add a runtime dependency
-uv add --dev <package>   # add a test/lint dependency
+uv add <package>         # add a runtime dependency to rag
+uv add --dev <package>   # add a test/lint dependency to rag
 ```
+
+Don't run `uv sync` inside `rag/`: it would uninstall the `migrations` packages from the shared environment. `uv run` is safe here.
 
 Importing `helpers` downloads the NLTK `punkt_tab` and `stopwords` data on first run, so it needs network access.
 

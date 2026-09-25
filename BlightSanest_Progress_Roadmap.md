@@ -80,7 +80,7 @@
 #### 2.1.9 Local Development Environment
 - ✅ Docker Compose: PostgreSQL 15 Alpine, Redis 7 Alpine, Ollama — shared `blightsanest_network`
   - RAG, API, PubSub services present but commented out (no Dockerfiles yet)
-- ✅ Python 3.12 (`rag/.python-version`), dependencies managed with `uv` (`rag/pyproject.toml` + `rag/uv.lock`)
+- ✅ Python 3.12 (root `.python-version`), dependencies managed with a `uv` workspace (`rag/pyproject.toml`, shared root `uv.lock` + `.venv`)
 
 ### 2.2 What Remains for Phase 1 ⏳
 
@@ -455,13 +455,14 @@ blightsanest_stable_insights/
 │   ├── server.py                # gRPC server stub (empty)
 │   ├── test/
 │   ├── pytest.ini
-│   └── pyproject.toml, uv.lock  # uv-managed dependencies
+│   └── pyproject.toml           # uv workspace member
 ├── api/                          # Go API service
 │   ├── cmd/api/                 # main, server, logger
 │   └── internal/{config,domain}/
 ├── models/                       # SQLAlchemy models
-├── migrations/                   # Alembic (own pyproject.toml + uv.lock)
+├── migrations/                   # Alembic (uv workspace member)
 ├── docker-compose.yml
+├── pyproject.toml, uv.lock       # uv workspace root, shared .venv
 └── CLAUDE.md
 ```
 
