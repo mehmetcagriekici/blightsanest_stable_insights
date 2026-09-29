@@ -1,7 +1,8 @@
 import logging
 import os
 
-from ollama import AsyncClient, ChatResponse
+import httpx
+from ollama import AsyncClient, ChatResponse, ResponseError
 
 # Ollama host - defaults to localhost:11434 for local development
 # When running in Docker, set OLLAMA_HOST env var to http://ollama:11434
@@ -24,6 +25,6 @@ async def llm_ollama(
             ],
         )
         return response.message.content
-    except Exception as e:
+    except (ResponseError, ConnectionError, httpx.HTTPError) as e:
         logger.error("ollama chat call failed: %s", e)
         return None

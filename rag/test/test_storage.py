@@ -1,4 +1,4 @@
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 from botocore.exceptions import ClientError
@@ -12,33 +12,38 @@ from storage.storage import Storage
 def mock_user():
     user = Mock()
     user.id = "user1"
-    user.bucket_name = "test_bucket"
     return user
 
 
 # mock storage
 @pytest.fixture
 def storage(mock_user):
-    with patch("storage.storage.redis.Redis"), patch("storage.storage.boto3.client"):
-        # init storage
-        s = Storage(mock_user)
-
-        # mock storage attrs
-        s.redis_connection = Mock()
-        s.s3_client = Mock()
-        s.type_converter = Mock()
-        s.redis_ttl = 3600
-
-        return s
+    # clients are passed in, so plain mocks replace s3 and redis
+    s = Storage(
+        mock_user,
+        bucket_name="test_bucket",
+        s3_client=Mock(),
+        redis_connection=Mock(),
+    )
+    s.type_converter = Mock()
+    return s
 
 
 # test storage initialization
 class TestStorageInitialization:
-    @patch("storage.storage.redis.Redis")
-    @patch("storage.storage.boto3.client")
-    def test_registers_models(self, mock_boto, mock_redis, mock_user):
-        s = Storage(mock_user)
-        assert s.type_converter is not None
+    # the models storage persists must be registered with its converter
+    def test_registers_models(self, mock_user):
+        s = Storage(mock_user, "test_bucket", Mock(), Mock())
+        assert "Document" in s.type_converter.deserializers
+        assert "User" in s.type_converter.deserializers
+
+
+# every object for a user lives under users/{user_id}/
+class TestKeys:
+    @pytest.mark.parametrize("user_id", ["user1", "user2"])
+    def test_key_uses_users_prefix(self, storage, user_id):
+        storage.database_user.id = user_id
+        assert storage._key("doc.pkl") == f"users/{user_id}/doc.pkl"
 
 
 # test while uploading data
@@ -53,13 +58,13 @@ class TestUploadData:
         # test s3
         storage.s3_client.put_object.assert_called_once_with(
             Bucket="test_bucket",
-            Key="user1/doc.pkl",
+            Key="users/user1/doc.pkl",
             Body=b"serialized",
         )
 
         # test redis
         storage.redis_connection.set.assert_called_once_with(
-            name="user1/doc.pkl",
+            name="users/user1/doc.pkl",
             value=b"serialized",
             ex=storage.redis_ttl,
         )
@@ -85,7 +90,7 @@ class TestUploadData:
             storage.upload_data("doc.pkl", {"a": 1})
 
         # after s3 failure redis must not be called
-        storage.redis_connection.setex.assert_not_called()
+        storage.redis_connection.set.assert_not_called()
 
     # redis is an optional cache: a redis failure after a successful s3 write
     # must not fail the upload
@@ -112,6 +117,8 @@ class TestLoadData:
         # get the result from the storage
         result = storage.load_data("doc.pkl")
         assert result == {"x": 1}
+        # the cache is read under the user's prefix
+        storage.redis_connection.get.assert_called_once_with("users/user1/doc.pkl")
         # result must come from the cache
         storage.s3_client.get_object.assert_not_called()
 
@@ -128,8 +135,12 @@ class TestLoadData:
         # get the result from the storage
         result = storage.load_data("doc.pkl")
         assert result == {"x": 1}
-        # the result must come from the s3
-        storage.s3_client.get_object.assert_called_once()
+        # the result must come from s3, under the same key as the cache
+        storage.redis_connection.get.assert_called_once_with("users/user1/doc.pkl")
+        storage.s3_client.get_object.assert_called_once_with(
+            Bucket="test_bucket",
+            Key="users/user1/doc.pkl",
+        )
 
     # test load failure - both cache and s3 -
     def test_load_s3_failure_returns_none(self, storage):

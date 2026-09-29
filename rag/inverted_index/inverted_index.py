@@ -7,7 +7,7 @@ from botocore.exceptions import ClientError
 from redis import ResponseError
 
 from constants.constants import BM25_B, BM25_K1, SEARCH_LIMIT
-from custom_types.custom_types import Document, User
+from custom_types.custom_types import Document
 from helpers.helpers import tokenize
 from storage.storage import Storage
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class InvertedIndex:
-    def __init__(self, current_user: User) -> None:
+    def __init__(self, storage: Storage) -> None:
         # a dictionary mapping tokens to set of document ids
         self.index: dict[str, set[str]] = {}
         # a dictionary mapping document ids to their full document objects
@@ -26,7 +26,7 @@ class InvertedIndex:
         self.doc_lengths: dict[str, int] = {}
 
         # storage for indexes, docmap, term_frequencies, and document lengths
-        self.storage = Storage(current_user)
+        self.storage = storage
 
     # tokenize document content (text), add each token to the index with the document id
     def add_document(self, text: str, doc_id: str) -> None:

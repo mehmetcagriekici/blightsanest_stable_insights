@@ -1,30 +1,30 @@
 import logging
+import os
 
 from botocore.exceptions import ClientError
 from redis import ResponseError
 from sentence_transformers import SentenceTransformer
 
 from constants.constants import SEARCH_LIMIT
-from custom_types.custom_types import Document, User
+from custom_types.custom_types import Document
 from helpers.helpers import cosine_similarity, semantic_chunk
 from storage.storage import Storage
 
 logger = logging.getLogger(__name__)
+model = SentenceTransformer(os.getenv("SENTENCE_TRANSFORMERS_MODEL_NAME"))
 
 
 # semantic indexing class with chunking
 class SemanticIndex:
-    def __init__(
-        self, current_user: User, model_name: str = "all-MiniLM-L6-v2"
-    ) -> None:
-        self.model = SentenceTransformer(model_name)
+    def __init__(self, storage: Storage) -> None:
+        self.model = model
         self.documents = None
         self.docmap = {}
         self.chunk_embeddings = None
         self.chunk_metadata = None
 
         # storage for embeddings and metadata
-        self.storage = Storage(current_user)
+        self.storage = storage
 
     # generate an embedding using the model for a text
     def generate_embedding(self, text: str):
@@ -133,51 +133,40 @@ class SemanticIndex:
         if self.documents is None:
             raise ValueError("documents is none")
 
+        if not query.strip():
+            return []
+
         # generate an embedding from the query
         query_embedding = self.generate_embedding(query)
 
         # document similarity_scores
-        document_scores = {}
+        document_scores: dict[str, tuple[float, dict]] = {}
         # iterate over the chunks
         for i in range(len(self.chunk_embeddings)):
             # create a similarity score between the query embedding and current chunk embedding
-            similarity_score = cosine_similarity(
-                query_embedding, self.chunk_embeddings[i]
-            )
+            score = cosine_similarity(query_embedding, self.chunk_embeddings[i])
             # get chunk metadata
             metadata = self.chunk_metadata[i]
+            doc_id = metadata["document_id"]
             # if the document score does not exist create a new one
-            if metadata["document_id"] not in document_scores:
-                document_scores[metadata["document_id"]] = similarity_score
-            elif document_scores[metadata["document_id"]] < similarity_score:
-                # otherwise if the current score is larger than the previous one update it
-                document_scores[metadata["document_id"]] = similarity_score
+            if doc_id not in document_scores or score > document_scores[doc_id][0]:
+                document_scores[doc_id] = (score, metadata)
 
         # get the top documents using the limit
         top_documents = sorted(
-            document_scores.items(), key=lambda kv: kv[1], reverse=True
+            document_scores.items(), key=lambda kv: kv[1][0], reverse=True
         )[:limit]
         # from the top documents create the result that will be sent
         results = []
-        for kv in top_documents:
-            document_id = kv[0]
-            # resolve chunks back to documents through the stable docmap
-            # using document_id - never rely on positional indexes, since
-            # cached chunk_metadata can outlive a reordering of self.documents
+        for document_id, (score, metadata) in top_documents:
             document = self.docmap.get(document_id)
             if document is None:
                 continue
-            metadata = list(
-                filter(lambda d: d["document_id"] == document_id, self.chunk_metadata)
-            )
-            # get the first metadata
-            if len(metadata) > 0:
-                metadata = metadata[0]
             result = {
                 "id": document.id,
                 "content": document.content,
-                "score": round(kv[1], 4),
-                "metadata": metadata or {},
+                "score": round(score, 4),
+                "metadata": metadata,
             }
             results.append(result)
 

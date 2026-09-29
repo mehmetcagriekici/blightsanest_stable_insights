@@ -1,7 +1,6 @@
 import json
 import re
 from collections import Counter, defaultdict
-from typing import cast
 
 import nltk
 import numpy as np
@@ -14,8 +13,12 @@ stop_words = set(stopwords.words("english"))
 
 
 # parse json
+# LLMs often wrap JSON in ```json fences despite the prompt
+_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$")
+
+
 def parse_json(data):
-    return json.loads(data)
+    return json.loads(_FENCE.sub("", data.strip()))
 
 
 # helper function to tokenize a string
@@ -27,11 +30,11 @@ def tokenize(text: str) -> list[str]:
 # helper function to calculate cosine similarity
 def cosine_similarity(v1, v2) -> float:
     dot_product: float = np.dot(v1, v2)
-    norm1: float = cast(float, np.linalg.norm(v1))
-    norm2: float = cast(float, np.linalg.norm(v2))
+    norm1 = np.linalg.norm(v1)
+    norm2 = np.linalg.norm(v2)
     if norm1 == 0 or norm2 == 0:
         return 0.0
-    return dot_product / (norm1 * norm2)
+    return float(dot_product / (norm1 * norm2))
 
 
 # helper function to chunk texts
@@ -94,7 +97,7 @@ def semantic_chunk(text: str, size: int, overlap: int) -> list[str]:
         return []
 
     # split text into sentences
-    sentences = re.split(r"(?<=[.!?])\s+", text)
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+|\s*\n+\s*", text) if s]
     # if there is only one sentence treat it as a single chunk
     if len(sentences) == 1 and not sentences[0].endswith((".", "!", "?")):
         sentences = [text]

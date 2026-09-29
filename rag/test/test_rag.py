@@ -1,12 +1,14 @@
 import json
 
-import boto3
 import pytest
 from moto import mock_aws
 
+from config.config import Config
 from custom_types.custom_types import Document
 from rag.rag import RAG
 from search.hybrid_search import HybridSearch
+from storage.clients import create_redis_client, create_s3_client
+from storage.storage import Storage
 
 
 class TestRagEnd2End:
@@ -27,19 +29,25 @@ class TestRagEnd2End:
         # wraps the coroutine in a sync function, which stops pytest-asyncio
         # from awaiting the test
         with mock_aws():
-            # Setup S3
-            s3 = boto3.client("s3", region_name="us-east-1")
-            s3.create_bucket(Bucket="test_bucket")
+            # clients are created once and shared, as the service will do
+            config = Config(bucket_name="test_bucket", region="us-east-1")
+            s3 = create_s3_client(config)
+            s3.create_bucket(Bucket=config.bucket_name)
+            redis_connection = create_redis_client(config)
 
             # --- PHASE 1: Build and save indexes ---
-            search = HybridSearch(mock_user, mock_documents)
+            storage = Storage(mock_user, config.bucket_name, s3, redis_connection)
+            search = HybridSearch(storage, mock_documents)
 
             # Verify indexes were built
             assert len(search.inverted_index.index) > 0
             assert search.semantic_index.chunk_embeddings is not None
 
             # --- PHASE 2: Load fresh instances (simulate new request) ---
-            search_reloaded = HybridSearch(mock_user, mock_documents)
+            storage_reloaded = Storage(
+                mock_user, config.bucket_name, s3, redis_connection
+            )
+            search_reloaded = HybridSearch(storage_reloaded, mock_documents)
 
             # Verify indexes loaded from storage
             assert len(search_reloaded.inverted_index.index) > 0

@@ -2,6 +2,8 @@
 import json
 from collections.abc import Awaitable, Callable
 
+from pydantic import ValidationError
+
 from custom_types.custom_types import Document, RagResponse
 from helpers.helpers import parse_json
 
@@ -63,7 +65,11 @@ class RAG:
             data = parse_json(response)
         except json.JSONDecodeError as e:
             raise ValueError(f"LLM returned non-JSON response: {e}") from e
-        if "status" not in data or "response" not in data:
-            raise ValueError("invalid llm response")
-
-        return RagResponse(**data)
+        # the reply is external data, not a wrong argument type, so every invalid
+        # reply raises the same ValueError for callers to handle
+        if not isinstance(data, dict):
+            raise ValueError("invalid llm response: expected a JSON object")  # noqa: TRY004
+        try:
+            return RagResponse(**data)
+        except ValidationError as e:
+            raise ValueError(f"invalid llm response: {e}") from e

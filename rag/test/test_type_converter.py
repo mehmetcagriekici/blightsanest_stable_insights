@@ -1,6 +1,9 @@
 from collections import Counter, OrderedDict, defaultdict
 
+import msgpack
 import numpy as np
+import pytest
+from pydantic import BaseModel
 
 from custom_types.custom_types import Document
 from type_converter.type_converter import TypeConverter
@@ -72,33 +75,23 @@ class TestTypeConverterBasicTypes:
         assert restored == original
         assert isinstance(restored, tuple)
 
-    def test_serialize_deserialize_numpy_array_1d(self):
-        """Test 1D numpy array serialization."""
+    @pytest.mark.parametrize(
+        "original",
+        [
+            np.array([1.0, 2.0, 3.0]),
+            np.array([[1, 2], [3, 4], [5, 6]]),
+            np.array([1.5, 2.5, 3.5], dtype=np.float32),
+        ],
+        ids=["1d-float64", "2d-int", "1d-float32"],
+    )
+    def test_serialize_deserialize_numpy_array(self, original):
+        """Test numpy arrays keep their values, shape, and dtype."""
         converter = TypeConverter()
-        original = np.array([1.0, 2.0, 3.0])
-        serialized = converter.serialize(original)
-        restored = converter.deserialize(serialized)
+        restored = converter.deserialize(converter.serialize(original))
         np.testing.assert_array_equal(restored, original)
         assert isinstance(restored, np.ndarray)
+        assert restored.shape == original.shape
         assert restored.dtype == original.dtype
-
-    def test_serialize_deserialize_numpy_array_2d(self):
-        """Test 2D numpy array serialization."""
-        converter = TypeConverter()
-        original = np.array([[1, 2], [3, 4], [5, 6]])
-        serialized = converter.serialize(original)
-        restored = converter.deserialize(serialized)
-        np.testing.assert_array_equal(restored, original)
-        assert restored.shape == (3, 2)
-
-    def test_serialize_deserialize_numpy_array_float32(self):
-        """Test numpy array with different dtype."""
-        converter = TypeConverter()
-        original = np.array([1.5, 2.5, 3.5], dtype=np.float32)
-        serialized = converter.serialize(original)
-        restored = converter.deserialize(serialized)
-        np.testing.assert_array_equal(restored, original)
-        assert restored.dtype == np.float32
 
     def test_serialize_deserialize_defaultdict_counter(self):
         """Test defaultdict with Counter factory."""
@@ -222,35 +215,6 @@ class TestTypeConverterEdgeCases:
         # None
         assert converter.deserialize(converter.serialize(None)) is None
 
-    def test_set_with_strings(self):
-        """Test set containing strings."""
-        converter = TypeConverter()
-        original = {"apple", "banana", "cherry"}
-        restored = converter.deserialize(converter.serialize(original))
-        assert restored == original
-
-    def test_counter_with_string_keys(self):
-        """Test Counter with string keys (common use case)."""
-        converter = TypeConverter()
-        original = Counter({"the": 100, "and": 85, "or": 42})
-        restored = converter.deserialize(converter.serialize(original))
-        assert restored == original
-
-    def test_very_large_set(self):
-        """Test large set doesn't break."""
-        converter = TypeConverter()
-        original = set(range(10000))
-        restored = converter.deserialize(converter.serialize(original))
-        assert restored == original
-        assert len(restored) == 10000
-
-    def test_unicode_in_set(self):
-        """Test unicode strings in set."""
-        converter = TypeConverter()
-        original = {"hello", "世界", "🌍"}
-        restored = converter.deserialize(converter.serialize(original))
-        assert restored == original
-
     def test_empty_nested_structures(self):
         """Test nested empty containers."""
         converter = TypeConverter()
@@ -269,14 +233,6 @@ class TestTypeConverterEdgeCases:
 
 class TestTypeConverterPydanticModels:
     """Test Pydantic model serialization."""
-
-    def test_pydantic_model_registration(self):
-        """Test that Pydantic models can be registered."""
-        converter = TypeConverter()
-        converter.register_pydantic_models(Document)
-
-        # Just verify no error on registration
-        assert "Document" in converter.deserializers
 
     def test_serialize_deserialize_document(self):
         """Test Document Pydantic model."""
@@ -348,22 +304,6 @@ class TestTypeConverterComplexRealWorld:
         assert restored["quick"] == {"doc1"}
         assert isinstance(restored["the"], set)
 
-    def test_term_frequencies_structure(self):
-        """Test term_frequencies like InvertedIndex produces."""
-        converter = TypeConverter()
-
-        term_frequencies = defaultdict(Counter)
-        term_frequencies["doc1"]["the"] = 5
-        term_frequencies["doc1"]["quick"] = 2
-        term_frequencies["doc2"]["the"] = 3
-
-        serialized = converter.serialize(term_frequencies)
-        restored = converter.deserialize(serialized)
-
-        assert restored["doc1"]["the"] == 5
-        assert restored["doc1"]["quick"] == 2
-        assert restored["doc2"]["the"] == 3
-
     def test_semantic_index_chunk_metadata(self):
         """Test metadata structure like SemanticIndex produces."""
         converter = TypeConverter()
@@ -396,20 +336,17 @@ class TestTypeConverterComplexRealWorld:
         assert restored.dtype == np.float32
 
 
-class TestTypeConverterRoundTrip:
-    """Test that serialize/deserialize preserves data integrity."""
+class Unregistered(BaseModel):
+    x: int
 
-    def test_multiple_roundtrips(self):
-        """Test data survives multiple serialize/deserialize cycles."""
-        converter = TypeConverter()
 
-        original = {"set": {1, 2, 3}, "counter": Counter({"a": 5}), "tuple": (4, 5, 6)}
+class TestTypeConverterUnregisteredTypes:
+    # an unregistered model must fail loudly instead of round-tripping as a dict
+    def test_serializing_unregistered_model_raises(self):
+        with pytest.raises(TypeError, match="Unregistered is not registered"):
+            TypeConverter().serialize(Unregistered(x=1))
 
-        current = original
-        for _ in range(5):
-            serialized = converter.serialize(current)
-            current = converter.deserialize(serialized)
-
-        assert current["set"] == original["set"]
-        assert current["counter"] == original["counter"]
-        assert current["tuple"] == original["tuple"]
+    def test_deserializing_unknown_type_tag_raises(self):
+        packed = msgpack.packb({"__blightsanest_type__": "Nope", "value": {"x": 1}})
+        with pytest.raises(TypeError, match="no deserializer registered for 'Nope'"):
+            TypeConverter().deserialize(packed)

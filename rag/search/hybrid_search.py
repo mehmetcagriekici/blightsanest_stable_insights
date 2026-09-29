@@ -1,19 +1,20 @@
 from constants.constants import SEARCH_LIMIT
-from custom_types.custom_types import Document, User
+from custom_types.custom_types import Document
 from helpers.helpers import calc_rrf_score
 from inverted_index.inverted_index import InvertedIndex
 from semantic_index.semantic_index import SemanticIndex
+from storage.storage import Storage
 
 
 # blightsanest main search engine
 class HybridSearch:
-    def __init__(self, current_user: User, documents: list[Document]) -> None:
+    def __init__(self, storage: Storage, documents: list[Document]) -> None:
         # documents search will run on
         self.documents = documents
         # semantic index
-        self.semantic_index = SemanticIndex(current_user)
+        self.semantic_index = SemanticIndex(storage)
         # inverted_index
-        self.inverted_index = InvertedIndex(current_user)
+        self.inverted_index = InvertedIndex(storage)
 
         # local development
         # load the semantic_index
@@ -31,6 +32,9 @@ class HybridSearch:
 
     # rrf search
     def rrf_search(self, query: str, limit: int = SEARCH_LIMIT):
+        if not query.strip():
+            return []
+
         # get the bm25 search results
         bm25_results = self.bm25_search(query, limit)
         # sort bm25 results into a list
@@ -91,4 +95,6 @@ class HybridSearch:
             )
 
         # sort the rrf scores
-        return sorted(rrf_scores, key=lambda score: score["rrf_score"], reverse=True)
+        return sorted(rrf_scores, key=lambda score: score["rrf_score"], reverse=True)[
+            :limit
+        ]

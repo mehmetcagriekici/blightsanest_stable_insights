@@ -109,6 +109,10 @@ class TypeConverter:
         if isinstance(data, BaseModel):
             # metadata
             name = data.__class__.__name__
+            if name not in self.serializers:
+                raise TypeError(
+                    f"{name} is not registered; call register_pydantic_models({name})"
+                )
             # value pydantic models initiated at the storage __init__
             content = (
                 self.serializers[name](data)
@@ -184,18 +188,12 @@ class TypeConverter:
         # for list ensure every element is deserialized and return the final list
         if isinstance(data, list):
             return [self.convert_back_from_serialized(item) for item in data]
-
-        # for dicts
         if isinstance(data, dict):
-            # check for __type___ created during serialization
             if "__blightsanest_type__" in data:
                 t = data["__blightsanest_type__"]
                 v = data["value"]
-                # use deserializers
-                if t in self.deserializers:
-                    return self.deserializers[t](self.convert_back_from_serialized(v))
-
+                if t not in self.deserializers:
+                    raise TypeError(f"no deserializer registered for {t!r}")
+                return self.deserializers[t](self.convert_back_from_serialized(v))
             return {k: self.convert_back_from_serialized(v) for k, v in data.items()}
-
-        # for unmatched instances, just return the data
         return data

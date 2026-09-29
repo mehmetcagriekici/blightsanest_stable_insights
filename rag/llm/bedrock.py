@@ -5,8 +5,8 @@ import os
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
+region_name = os.getenv("AWS_REGION_NAME")
 # model id is the model-agnostic knob: any Converse-compatible model works
-region_name = os.getenv("AWS_REGION_NAME", "us-east-1")
 model_id = os.getenv("BEDROCK_MODEL_ID")
 
 logger = logging.getLogger(__name__)
