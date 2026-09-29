@@ -46,7 +46,7 @@ Users store private data across any domain (health, finance, fitness, productivi
 
 Version 1 is completely private. Community features belong to Version 2.
 
-**Status**: `ROADMAP.md` is the authoritative source for implementation status. Snapshot: database schema and RAG service complete; Go API in progress; gRPC, PubSub, and infra/CI/CD not started.
+**Status**: `BlightSanest_Progress_Roadmap.md` is the authoritative source for implementation status, and `CODE_ISSUES.md` tracks open problems. Snapshot: RAG service in progress (core pipeline works; queries can still trigger index builds); database schema partial (users/documents, no pgvector); Go API scaffolding only; gRPC, PubSub, and infra/CI/CD not started.
 
 ---
 
@@ -153,6 +153,7 @@ rag/                  # Python RAG service
     search/
     rag/
     storage/
+    config/
     llm/
     custom_types/
     test/

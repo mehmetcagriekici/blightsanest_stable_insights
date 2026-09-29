@@ -148,7 +148,7 @@ This approach:
 
 | Component | Technology | Environment |
 |-----------|-----------|-------------|
-| **Embeddings** | Sentence Transformers (all-MiniLM-L6-v2) | Local dev & production (runs locally or containerized). |
+| **Embeddings** | Sentence Transformers (model set by `SENTENCE_TRANSFORMERS_MODEL_NAME`, e.g. all-MiniLM-L6-v2) | Local dev & production (runs locally or containerized). Loaded once per process. |
 | **LLM (Development)** | Ollama (`llm_ollama`, default model `gemma3`) | Local development via Docker. |
 | **LLM (Production)** | AWS Bedrock (`llm_bedrock`, Converse API, model set by `BEDROCK_MODEL_ID`) | Managed LLM service; replaces Ollama in production. Implemented, not yet tested. |
 | **Search Algorithm** | Hybrid Search + RRF | Combines BM25 (lexical) and semantic (embedding-based) search via Reciprocal Rank Fusion. |
@@ -275,7 +275,7 @@ s3://blightsanest-bucket/
             └── metadata.json
 ```
 
-**Current implementation**: `Storage` writes flat MessagePack objects to `{bucket}/{user_id}/{name}`, where `name` is one of `inverted_index`, `docmap`, `term_frequencies`, `doc_lengths`, `chunk_embeddings`, or `chunk_metadata`. The `users/` prefix, per-type folders, and original document files are not implemented yet. The bucket and S3 credentials currently come from fields on the RAG `User` model (`bucket_name`, `aws_access_key_id`, `aws_secret_access_key`, `region`). The target is a single service IAM role.
+**Current implementation**: `Storage` writes flat MessagePack objects to `{bucket}/users/{user_id}/{name}`, where `name` is one of `inverted_index`, `docmap`, `term_frequencies`, `doc_lengths`, `chunk_embeddings`, or `chunk_metadata`. Per-type folders and original document files are not implemented yet. The bucket and region come from the RAG service's config (`S3_BUCKET`, `AWS_REGION`). No AWS keys are stored: the S3 client uses boto3's default credential chain, which on EKS is the pod's IAM role.
 
 **Key principle**: S3 is the **authoritative store**. All indexes persist here. Local/Redis copies are disposable.
 
@@ -328,10 +328,9 @@ CREATE TABLE embeddings (
 Active users' indexes cached in Redis with TTL:
 
 ```
-Target Key Pattern: users/{user_id}/{index_type}
-Current Key Pattern: {user_id}/{index_type}
+Key Pattern: users/{user_id}/{index_type}
 
-Examples (target):
+Examples:
   - users/user_123/inverted_index       → BM25 structures (TTL: 1 hour)
   - users/user_123/chunk_embeddings     → Embeddings array (TTL: 1 hour)
   - users/user_123/chunk_metadata       → Metadata (TTL: 1 hour)
@@ -489,7 +488,7 @@ AWS Infrastructure:
 
 | Phase | Status | Focus | Est. Duration |
 |-------|--------|-------|---------------|
-| 1 | 🟡 **In Progress** | RAG service, indexing, storage layer, Bedrock provider (untested) | — |
+| 1 | 🟡 **In Progress** | RAG service, indexing, storage layer (target layout and credentials done), Bedrock provider (untested); build-vs-load redesign next | — |
 | 2 | 🟡 **Partial** | Database: users/documents schema done, pgvector pending | — |
 | 3 | 🟡 **Started** | Go API service: server, config, logger scaffolding; no endpoints yet | 3-4 weeks |
 | 4 | ⏳ **Planned** | gRPC integration between API & RAG | 2-3 weeks |
@@ -551,4 +550,4 @@ AWS Infrastructure:
 
 **Version**: 1.1  
 **Last Updated**: September 2026  
-**Status**: Phase 1 (RAG) finishing: Bedrock tests and storage alignment remain. Phase 3 (Go API) scaffolding started. See `BlightSanest_Progress_Roadmap.md` for details.
+**Status**: Phase 1 (RAG) in progress: storage alignment done; the build-vs-load redesign and Bedrock tests remain. Phase 3 (Go API) scaffolding started. See `BlightSanest_Progress_Roadmap.md` and `CODE_ISSUES.md` for details.

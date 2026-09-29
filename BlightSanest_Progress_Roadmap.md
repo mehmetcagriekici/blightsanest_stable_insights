@@ -9,7 +9,7 @@
 
 | Metric | Status | Notes |
 |--------|--------|-------|
-| **Phase 1: RAG Service** | 🟡 In Progress | Indexing, hybrid search, storage, RAG class, Ollama + Bedrock providers implemented. Bedrock untested; per-component unit tests, storage-layout and credential fixes pending. |
+| **Phase 1: RAG Service** | 🟡 In Progress | Indexing, hybrid search, storage, RAG class, Ollama + Bedrock providers implemented; storage layout and credentials aligned with the target design; 72 tests. Open: queries can still build indexes, save failures are swallowed, Bedrock untested. See `CODE_ISSUES.md`. |
 | **Phase 2: Database** | 🟡 Partial | `users` and `documents` tables, SQLAlchemy models, first Alembic migration done. pgvector / `embeddings` table not started. |
 | **Phase 3: API Service** | 🟡 Started | Go HTTP server with graceful shutdown, typed env config, slog logger (not yet wired in), domain types. No routes, handlers, services, or repositories yet. |
 | **Phase 4: gRPC Integration** | ⏳ Not Started | No `proto/` directory yet. |
@@ -28,13 +28,13 @@
   - Takes query + retrieved documents
   - Formats documents as `[id] content` for citation in the prompt
   - Calls the injected LLM `generate(user_prompt, system_prompt)` function
-  - Parses the JSON reply into a Pydantic `RagResponse` (`status`: found / not found, `response`)
-  - Raises `ValueError` on no response, non-JSON, or missing fields
+  - Parses the JSON reply into a Pydantic `RagResponse` (`status`: `Literal["found", "not found"]`, `response`); ```` ```json ```` fences are stripped
+  - Raises `ValueError` on no response, non-JSON, a non-object reply, or invalid fields
 - ✅ Dependency injection: the LLM provider is passed via the constructor; no provider selection inside `RAG`
 
 #### 2.1.2 LLM Providers (`rag/llm/`)
-- ✅ `llm_ollama` — async Ollama client, `OLLAMA_HOST` env (default `http://localhost:11434`), default model `gemma3`
-- ✅ `llm_bedrock` — Bedrock Converse API (model-agnostic), `AWS_REGION_NAME` / `BEDROCK_MODEL_ID` env (default `anthropic.claude-3-haiku-20240307-v1:0`), boto3 call run via `asyncio.to_thread`
+- ✅ `llm_ollama` (`ollama_provider.py`) — async Ollama client, `OLLAMA_HOST` env (default `http://localhost:11434`), default model `gemma3`; catches only Ollama and HTTP errors
+- ✅ `llm_bedrock` — Bedrock Converse API (model-agnostic), `AWS_REGION_NAME` / `BEDROCK_MODEL_ID` env (no defaults; `BEDROCK_MODEL_ID` must be set), boto3 call run via `asyncio.to_thread`
   - Uses the default AWS credential chain (IAM role compatible)
   - Returns `None` on client errors or malformed responses
   - ⚠️ Not covered by any test yet
@@ -44,38 +44,47 @@
   - Token → document ID mapping, term frequencies, document lengths, docmap
 - ✅ `build()` / `save()` / `load()` entry points
 - ✅ Persisted via `Storage` as MessagePack blobs: `inverted_index`, `docmap`, `term_frequencies`, `doc_lengths`
+- ⚠️ Re-adding or deleting documents isn't handled (R26); punctuation tokens match queries (R31)
 
 #### 2.1.4 Semantic Index (`rag/semantic_index/`)
-- ✅ Sentence Transformers `all-MiniLM-L6-v2` (384-dim)
-- ✅ Sentence-based chunking with sliding window (`semantic_chunk`: 4 sentences per chunk, 1 sentence overlap)
+- ✅ Sentence Transformers model named by `SENTENCE_TRANSFORMERS_MODEL_NAME` (e.g. `all-MiniLM-L6-v2`, 384-dim), loaded once per process
+- ✅ Sentence-based chunking with sliding window (`semantic_chunk`: 4 sentences per chunk, 1 sentence overlap; sentences split on `.`, `!`, `?` and line breaks)
 - ✅ Chunk metadata: `document_id`, `chunk_index`, `total_chunks`
 - ✅ Chunks resolved back to documents via the stable `docmap` by `document_id` (no positional indexes)
 - ✅ `build_chunk_embeddings()` / `create_or_load_chunk_embeddings()`; persisted as `chunk_embeddings` (numpy) and `chunk_metadata`
-- ✅ Search: per-document max cosine similarity across chunks
+- ✅ Search: per-document max cosine similarity across chunks; results carry the best chunk's metadata; blank query returns `[]`
 
 #### 2.1.5 Hybrid Search — RRF (`rag/search/`)
 - ✅ Reciprocal Rank Fusion (k = 60) over the union of BM25 and semantic results
 - ✅ Content resolved from semantic results or the BM25 docmap
-- ✅ Default search limit 50
+- ✅ Returns at most `limit` results (default 50); blank query returns `[]`
 
 #### 2.1.6 Storage Layer (`rag/storage/`)
 - ✅ `Storage` class used by both indexes
   - `upload_data(name, data)` → S3 (authoritative), then Redis with TTL (default 3600s)
   - `load_data(name)` → Redis first, falls back to S3
   - Redis errors on upload or load are logged and non-fatal
-- ✅ Keys are per-user: `{user_id}/{name}` in both S3 and Redis
-- ⚠️ See §2.2.2 for gaps against the target design (`users/` prefix, credentials, cache repopulation)
+- ✅ Keys are per-user: `users/{user_id}/{name}` in both S3 and Redis, built by `Storage._key()`
+- ✅ No per-user AWS secrets: S3 and Redis clients are created once from `Config` (`rag/config/`, env `S3_BUCKET`, `AWS_REGION`, `REDIS_HOST`, `REDIS_PORT`) and passed into `Storage`; S3 uses boto3's default credential chain
+- ⚠️ See §2.2.2 for remaining gaps
 
 #### 2.1.7 Type Conversion & Serialization (`rag/type_converter/`)
 - ✅ `TypeConverter` with dynamic type registry + MessagePack
   - Handles set, tuple, Counter, OrderedDict, defaultdict, numpy arrays, Pydantic models
   - Recursive processing of nested structures
+  - Unregistered Pydantic models and unknown type tags raise `TypeError` instead of round-tripping as plain dicts
 
 #### 2.1.8 Testing (`rag/test/`)
-- ✅ `test_type_converter.py` — 32 tests
-- ✅ `test_storage.py` — 8 tests: model registration, upload success/empty/S3 failure/Redis failure non-fatal, cache hit, cache-miss S3 fallback, S3 failure returns `None`
-- ✅ `test_rag.py` — 1 end-to-end test: build → save → reload → RRF search → `RAG` with a mocked `generate`
-- ✅ Infrastructure: pytest + pytest-asyncio (`asyncio_mode = strict`), moto `mock_aws`, `conftest.py` fixtures (user, documents, S3 bucket, real Redis)
+- ✅ 72 tests:
+  - `test_type_converter.py` (27): round trips, nested and real index shapes, unregistered types raise
+  - `test_helpers.py` (14): plain-float similarity, chunking, chunk-window check, fence stripping
+  - `test_storage.py` (10): model registration, `users/{user_id}/` keys, upload and load paths, Redis-failure tolerance
+  - `test_rag_parsing.py` (9): valid and invalid LLM replies
+  - `test_config.py` (7): config loading and client factories
+  - `test_search.py` (4): RRF limit, blank queries, best-chunk metadata
+  - `test_rag.py` (1): end-to-end build → save → reload → RRF search → `RAG` with a mocked `generate`
+- ✅ Infrastructure: pytest + pytest-asyncio (`asyncio_mode = strict`), moto `mock_aws`, `conftest.py` fixtures (user, documents), embedding model name set for tests
+- ⚠️ The e2e test doesn't clear Redis, so re-runs within an hour use the cached index (R28)
 
 #### 2.1.9 Local Development Environment
 - ✅ Docker Compose: PostgreSQL 15 Alpine, Redis 7 Alpine, Ollama — shared `blightsanest_network`
@@ -90,22 +99,27 @@
 - ⏳ Benchmark Ollama vs Bedrock (quality, latency, cost)
 
 #### 2.2.2 Align Storage With the Target Design
-- ⏳ Key prefix `users/{user_id}/` (currently `{user_id}/`)
-- ⏳ Credentials: `Storage` currently builds its S3 client from per-user `aws_access_key_id` / `aws_secret_access_key` / `region` fields on `User`. Target design is a service IAM role (no per-user secrets); decision pending
+- ✅ Key prefix `users/{user_id}/`
+- ✅ Credentials: per-user secrets removed from `User`; one service identity via boto3's default credential chain (IAM role on EKS)
 - ⏳ Repopulate Redis on S3 fallback (currently a cache miss does not write back)
-- ⏳ Redis socket timeouts so an unreachable Redis falls back instead of hanging
-- ⏳ Chunk-metadata migration: indexes built before the `document_index` → `document_id` change must be rebuilt or versioned
+- 🟡 Redis socket timeouts (2s) are in place; redis-py's default retries still stretch a dead-Redis call to ~25s (R5)
+- ⏳ Distinguish "not found" from other S3 errors in `load_data` (R29)
+- ⏳ Drop the cached value when a Redis write fails after a successful S3 write (R27)
 
 #### 2.2.3 Pre-Built Index Enforcement
-- ⏳ `HybridSearch.__init__` currently calls `create_or_load_chunk_embeddings()` and `InvertedIndex.load()`, which build and save the index if storage is empty. Split this so the query path only loads, and building happens only at ingestion
+- ⏳ `HybridSearch.__init__` currently calls `create_or_load_chunk_embeddings()` and `InvertedIndex.load()`, which build and save the index if storage is empty. Split this so the query path only loads, and building happens only at ingestion (R3)
+- ⏳ Make saves fail loudly and keep index parts consistent (R7, R8, R30)
+- ⏳ Support updating and deleting documents in the BM25 index (R26), and share one docmap between the indexes (R32)
 
 #### 2.2.4 Test Coverage
-- ⏳ Unit tests for `InvertedIndex` (BM25 scoring), `SemanticIndex`, `HybridSearch` (RRF), chunking helpers
+- ✅ Unit tests for chunking helpers, `SemanticIndex.search_chunks`, `HybridSearch.rrf_search`, LLM reply parsing, config
+- ⏳ Unit tests for `InvertedIndex` (BM25 scoring)
 - ⏳ Tests for `llm_ollama` / `llm_bedrock`
+- ⏳ Isolate the e2e test from leftover Redis data (R28)
 
 #### 2.2.5 Tooling & Production Readiness
 - ✅ `uv` + `pyproject.toml` with Ruff in the `dev` group (no project Ruff config yet)
-- ⏳ Structured logging (module loggers instead of `botocore.client.logging` / `print`)
+- ✅ Module loggers (`logging.getLogger(__name__)`) in every RAG module; no `print`
 - ⏳ gRPC server (`rag/server.py` is currently an empty stub) — see Phase 4
 - ⏳ Error handling: missing indexes, S3 timeouts, Bedrock throttling, empty result sets
 
@@ -116,9 +130,9 @@ Phase 1 is **COMPLETE** when:
 - ✅ Storage layer (S3 + Redis fallback) working and tested
 - ✅ Ollama and Bedrock providers implemented
 - ⏳ Bedrock tested (mocked + real)
-- ⏳ Storage layout and credentials aligned with the target design
+- ✅ Storage layout and credentials aligned with the target design
 - ⏳ Query path never builds indexes
-- ⏳ Per-component unit tests in place
+- 🟡 Per-component unit tests in place (BM25 and LLM providers still missing)
 - ⏳ Ready for Phase 3/4 (API integration over gRPC)
 
 ---
@@ -384,14 +398,16 @@ Phase 2 (DB)  ──┼─→ Phase 3 (API) → Phase 4 (gRPC) → Phase 5 (PubS
 ### 10.1 Open Decisions
 
 1. **pgvector**: implement the `embeddings` table and RAG read path, or keep embeddings in S3/Redis only for v1
-2. **S3 credentials**: per-user credentials on `User` (current code) vs. a single service IAM role (target design)
 
 ### 10.2 Phase 1 Next Actions
 
-1. Bedrock tests (mocked + real)
-2. `users/{user_id}/` key prefix and chunk-metadata migration
-3. Remove index building from the `HybridSearch` query path
-4. Unit tests for BM25, semantic index, RRF
+1. Isolate the e2e test from Redis (R28), so it reliably exercises the build path
+2. Disable redis-py retries (R5)
+3. Redesign build vs. load: queries only load, ingestion builds and saves, saves fail loudly and consistently (R3, R7, R8, R30, R26, R29, R32)
+4. Drop stale cache entries on failed Redis writes (R27); stop punctuation from matching (R31)
+5. Bedrock tests (mocked + real) and BM25 unit tests
+
+The full list of open problems, with locations, is in `CODE_ISSUES.md`.
 
 ### 10.3 Phase 3 Next Actions
 
@@ -423,7 +439,7 @@ Phase 2 (DB)  ──┼─→ Phase 3 (API) → Phase 4 (gRPC) → Phase 5 (PubS
 - 100+ documents indexed without memory issues — ⏳
 - Hybrid search producing relevant results — ✅ in e2e test
 - Redis fallback working (S3 used when Redis is down) — ✅ unit tested
-- All tests passing with high coverage — ⏳ (BM25/semantic/RRF lack unit tests)
+- All tests passing with high coverage — 🟡 72 passing; BM25 and LLM providers lack unit tests
 
 ### 12.2 v1 Release
 
@@ -447,7 +463,8 @@ blightsanest_stable_insights/
 │   ├── inverted_index/          # BM25
 │   ├── semantic_index/          # Embeddings + chunking
 │   ├── search/                  # Hybrid search (RRF)
-│   ├── storage/                 # S3 + Redis layer
+│   ├── storage/                 # S3 + Redis layer, shared client factories
+│   ├── config/                  # Config loaded once from env
 │   ├── type_converter/          # MessagePack TypeConverter
 │   ├── llm/                     # ollama_provider.py, bedrock.py
 │   ├── custom_types/            # Pydantic models
