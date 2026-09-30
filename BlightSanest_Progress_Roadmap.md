@@ -9,7 +9,7 @@
 
 | Metric | Status | Notes |
 |--------|--------|-------|
-| **Phase 1: RAG Service** | 🟡 In Progress | Indexing, hybrid search, storage, RAG class, Ollama + Bedrock providers implemented; storage layout and credentials aligned with the target design; 72 tests. Open: queries can still build indexes, save failures are swallowed, Bedrock untested. See `CODE_ISSUES.md`. |
+| **Phase 1: RAG Service** | 🟡 In Progress | Indexing, hybrid search, storage, RAG class, Ollama + Bedrock providers implemented; storage layout and credentials aligned with the target design; queries only load pre-built, versioned snapshots; 141 tests. Open: real Bedrock test, gRPC server. See `CODE_ISSUES.md`. |
 | **Phase 2: Database** | 🟡 Partial | `users` and `documents` tables, SQLAlchemy models, first Alembic migration done. pgvector / `embeddings` table not started. |
 | **Phase 3: API Service** | 🟡 Started | Go HTTP server with graceful shutdown, typed env config, slog logger (not yet wired in), domain types. No routes, handlers, services, or repositories yet. |
 | **Phase 4: gRPC Integration** | ⏳ Not Started | No `proto/` directory yet. |
@@ -41,9 +41,8 @@
 
 #### 2.1.3 Inverted Index — BM25 (`rag/inverted_index/`)
 - ✅ BM25 from scratch (k1 = 1.5, b = 0.75)
-  - Token → document ID mapping, term frequencies, document lengths, docmap
-- ✅ `build()` / `save()` / `load()` entry points
-- ✅ Persisted via `Storage` as MessagePack blobs: `inverted_index`, `docmap`, `term_frequencies`, `doc_lengths`
+  - Token → document ID mapping, term frequencies, document lengths; the docmap is shared with the semantic index
+- ✅ `build()` / `remove_document()`; `export_parts()` / `restore_parts()` for the snapshot (no storage access of its own)
 - ✅ Re-adding a document replaces its old entry; `remove_document()` deletes one
 - ✅ Tokens with no letters or digits (punctuation) are dropped
 
@@ -52,20 +51,25 @@
 - ✅ Sentence-based chunking with sliding window (`semantic_chunk`: 4 sentences per chunk, 1 sentence overlap; sentences split on `.`, `!`, `?` and line breaks)
 - ✅ Chunk metadata: `document_id`, `chunk_index`, `total_chunks`
 - ✅ Chunks resolved back to documents via the stable `docmap` by `document_id` (no positional indexes)
-- ✅ `build_chunk_embeddings()` / `create_or_load_chunk_embeddings()`; persisted as `chunk_embeddings` (numpy) and `chunk_metadata`
+- ✅ Incremental `build_chunk_embeddings()`: replaces the given documents' chunks and embeds only those documents; `remove_document()`
+- ✅ `export_parts()` / `restore_parts()` for the snapshot; restore rejects embeddings and metadata of different lengths
 - ✅ Search: per-document max cosine similarity across chunks; results carry the best chunk's metadata; blank query returns `[]`
 
 #### 2.1.5 Hybrid Search — RRF (`rag/search/`)
 - ✅ Reciprocal Rank Fusion (k = 60) over the union of BM25 and semantic results
-- ✅ Content resolved from semantic results or the BM25 docmap
+- ✅ `HybridSearch` owns both indexes and one shared docmap, and saves them together as one versioned snapshot
+- ✅ Query path `HybridSearch.load()` never builds (raises `IndexNotBuiltError`); ingestion uses `load_or_empty()` → `build()` / `remove_documents()` → `save()`
+- ✅ `save()` writes all parts under `snapshots/{version}/`, then the manifest; failures raise and keep the previous snapshot live; the last two snapshots are kept
+- ✅ Content resolved from the shared docmap
 - ✅ Returns at most `limit` results (default 50); blank query returns `[]`
 
 #### 2.1.6 Storage Layer (`rag/storage/`)
-- ✅ `Storage` class used by both indexes
+- ✅ `Storage` class used by `HybridSearch`
   - `upload_data(name, data)` → S3 (authoritative), then Redis with TTL (default 3600s)
-  - `load_data(name)` → Redis first, falls back to S3
-  - Redis errors on upload or load are logged and non-fatal
-- ✅ Keys are per-user: `users/{user_id}/{name}` in both S3 and Redis, built by `Storage._key()`
+  - `load_data(name)` → Redis first, falls back to S3; `None` only for a missing key, other S3 errors raise
+  - `delete_data(name)`; `cache=False` bypasses Redis (used for the manifest)
+  - Redis errors and unreadable cached values are logged and non-fatal; a failed Redis write drops the cached key
+- ✅ Keys are per-user under `users/{user_id}/` in both S3 and Redis, built by `Storage._key()`
 - ✅ No per-user AWS secrets: S3 and Redis clients are created once from `Config` (`rag/config/`, env `S3_BUCKET`, `AWS_REGION`, `REDIS_HOST`, `REDIS_PORT`) and passed into `Storage`; S3 uses boto3's default credential chain
 - ⚠️ See §2.2.2 for remaining gaps
 
@@ -104,17 +108,18 @@
 - ✅ Credentials: per-user secrets removed from `User`; one service identity via boto3's default credential chain (IAM role on EKS)
 - ⏳ Repopulate Redis on S3 fallback (currently a cache miss does not write back)
 - ✅ Redis client fails fast: 2s socket timeouts and no retries
-- ⏳ Distinguish "not found" from other S3 errors in `load_data` (R29)
-- ⏳ Drop the cached value when a Redis write fails after a successful S3 write (R27)
+- ✅ Distinguish "not found" from other S3 errors in `load_data`
+- ✅ Drop the cached value when a Redis write fails after a successful S3 write
 
 #### 2.2.3 Pre-Built Index Enforcement
-- ⏳ `HybridSearch.__init__` currently calls `create_or_load_chunk_embeddings()` and `InvertedIndex.load()`, which build and save the index if storage is empty. Split this so the query path only loads, and building happens only at ingestion (R3)
-- ⏳ Make saves fail loudly and keep index parts consistent (R7, R8, R30)
-- ⏳ Share one docmap between the indexes (R32)
+- ✅ The query path only loads; building happens only at ingestion
+- ✅ Saves fail loudly and index parts stay consistent (versioned snapshot + manifest)
+- ✅ One docmap shared between the indexes
 
 #### 2.2.4 Test Coverage
-- ✅ Unit tests for chunking helpers, tokenizing, `SemanticIndex.search_chunks`, `HybridSearch.rrf_search`, LLM reply parsing, config
-- ✅ Unit tests for `InvertedIndex` (BM25 scoring, save/load round trip, update and delete)
+- ✅ Unit tests for chunking helpers, tokenizing, `SemanticIndex` (search, incremental build, remove), `HybridSearch.rrf_search`, LLM reply parsing, config
+- ✅ Unit tests for `InvertedIndex` (BM25 scoring, export/restore round trip, update and delete)
+- ✅ Snapshot tests against a real `Storage` on moto S3: query path never builds, save/load, update and delete, pruning, failed saves, corrupt snapshots, S3 outages
 - ✅ Mocked tests for `llm_ollama` / `llm_bedrock`
 - ✅ The e2e test is isolated from leftover Redis data
 
@@ -122,7 +127,7 @@
 - ✅ `uv` + `pyproject.toml` with Ruff in the `dev` group (no project Ruff config yet)
 - ✅ Module loggers (`logging.getLogger(__name__)`) in every RAG module; no `print`
 - ⏳ gRPC server (`rag/server.py` is currently an empty stub) — see Phase 4
-- ⏳ Error handling: missing indexes, S3 timeouts, Bedrock throttling, empty result sets
+- 🟡 Error handling: missing and corrupt indexes and S3 errors raise typed errors; mapping them to gRPC status codes, and Bedrock throttling, remain
 
 ### 2.3 Phase 1 Completion Criteria
 
@@ -132,8 +137,8 @@ Phase 1 is **COMPLETE** when:
 - ✅ Ollama and Bedrock providers implemented
 - ⏳ Bedrock tested (mocked + real)
 - ✅ Storage layout and credentials aligned with the target design
-- ⏳ Query path never builds indexes
-- 🟡 Per-component unit tests in place (BM25 and LLM providers still missing)
+- ✅ Query path never builds indexes
+- ✅ Per-component unit tests in place
 - ⏳ Ready for Phase 3/4 (API integration over gRPC)
 
 ---
@@ -402,9 +407,8 @@ Phase 2 (DB)  ──┼─→ Phase 3 (API) → Phase 4 (gRPC) → Phase 5 (PubS
 
 ### 10.2 Phase 1 Next Actions
 
-1. Redesign build vs. load: queries only load, ingestion builds and saves, saves fail loudly and consistently (R3, R7, R8, R30, R29, R32)
-2. Drop stale cache entries on failed Redis writes (R27)
-3. Bedrock integration test against a real dev account
+1. gRPC contract and server (Phase 4): ingestion RPCs over `load_or_empty` / `build` / `remove_documents` / `save`, query RPCs over `load` / `rrf_search` / `RAG.rag`
+2. Bedrock integration test against a real dev account
 
 The full list of open problems, with locations, is in `CODE_ISSUES.md`.
 

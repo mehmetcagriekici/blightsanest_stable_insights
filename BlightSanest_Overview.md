@@ -120,8 +120,8 @@ This approach:
 - ✅ Supports per-user privacy (each user has isolated index)
 
 **Current implementation**:
-- Index updates are full rebuilds via `build()` / `save()` / `build_chunk_embeddings()`; incremental (append-only) updates are not implemented.
-- `HybridSearch.__init__` loads indexes from storage but still builds and saves them if storage is empty. This fallback must be removed from the query path to fully enforce rule 5.
+- Ingestion updates indexes incrementally: `HybridSearch.build()` adds or replaces documents (only changed documents are re-embedded), `remove_documents()` deletes them, and `save()` writes one versioned snapshot.
+- The query path only loads: `HybridSearch.load()` raises `IndexNotBuiltError` when no index has been saved, and never builds one.
 
 ---
 
@@ -275,7 +275,7 @@ s3://blightsanest-bucket/
             └── metadata.json
 ```
 
-**Current implementation**: `Storage` writes flat MessagePack objects to `{bucket}/users/{user_id}/{name}`, where `name` is one of `inverted_index`, `docmap`, `term_frequencies`, `doc_lengths`, `chunk_embeddings`, or `chunk_metadata`. Per-type folders and original document files are not implemented yet. The bucket and region come from the RAG service's config (`S3_BUCKET`, `AWS_REGION`). No AWS keys are stored: the S3 client uses boto3's default credential chain, which on EKS is the pod's IAM role.
+**Current implementation**: each user's index is a versioned snapshot of MessagePack objects under `{bucket}/users/{user_id}/snapshots/{version}/` (`docmap`, `inverted_index`, `term_frequencies`, `doc_lengths`, `chunk_embeddings`, `chunk_metadata`), plus `{bucket}/users/{user_id}/manifest`, which names the live snapshot and is written last so readers never see a partial save. Per-type folders and original document files are not implemented yet. The bucket and region come from the RAG service's config (`S3_BUCKET`, `AWS_REGION`). No AWS keys are stored: the S3 client uses boto3's default credential chain, which on EKS is the pod's IAM role.
 
 **Key principle**: S3 is the **authoritative store**. All indexes persist here. Local/Redis copies are disposable.
 

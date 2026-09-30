@@ -46,7 +46,7 @@ Users store private data across any domain (health, finance, fitness, productivi
 
 Version 1 is completely private. Community features belong to Version 2.
 
-**Status**: `BlightSanest_Progress_Roadmap.md` is the authoritative source for implementation status, and `CODE_ISSUES.md` tracks open problems. Snapshot: RAG service in progress (core pipeline works; queries can still trigger index builds); database schema partial (users/documents, no pgvector); Go API scaffolding only; gRPC, PubSub, and infra/CI/CD not started.
+**Status**: `BlightSanest_Progress_Roadmap.md` is the authoritative source for implementation status, and `CODE_ISSUES.md` tracks open problems. Snapshot: RAG service in progress (core pipeline works; queries only load pre-built snapshots; gRPC server not started); database schema partial (users/documents, no pgvector); Go API scaffolding only; gRPC, PubSub, and infra/CI/CD not started.
 
 ---
 
@@ -105,11 +105,12 @@ Pre-built indexes only.
 
 Indexing occurs only during ingestion or updates. Queries must never trigger indexing or rebuilding.
 
-The correct update entry points are:
+The correct update entry points are on `HybridSearch` (`rag/search/`), which owns both indexes and saves them together:
 
-- `build()`
-- `save()`
-- `build_chunk_embeddings()`
+- `HybridSearch.load_or_empty()` then `build()` / `remove_documents()` then `save()` (ingestion)
+- `HybridSearch.load()` (query path: loads a saved snapshot, never builds; raises `IndexNotBuiltError` if none)
+
+`InvertedIndex.build()` and `SemanticIndex.build_chunk_embeddings()` update one index in memory; only `HybridSearch.save()` persists.
 
 ---
 
