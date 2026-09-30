@@ -1,30 +1,34 @@
-import logging
 import os
+from typing import Any
 
-from botocore.exceptions import ClientError
-from redis import ResponseError
+import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from constants.constants import SEARCH_LIMIT
 from custom_types.custom_types import Document
 from helpers.helpers import cosine_similarity, semantic_chunk
-from storage.storage import Storage
 
-logger = logging.getLogger(__name__)
 model = SentenceTransformer(os.getenv("SENTENCE_TRANSFORMERS_MODEL_NAME"))
 
 
 # semantic indexing class with chunking
 class SemanticIndex:
-    def __init__(self, storage: Storage) -> None:
-        self.model = model
-        self.documents = None
-        self.docmap = {}
-        self.chunk_embeddings = None
-        self.chunk_metadata = None
+    # the parts this index contributes to a saved snapshot (see HybridSearch)
+    PARTS = ("chunk_embeddings", "chunk_metadata")
 
-        # storage for embeddings and metadata
-        self.storage = storage
+    def __init__(
+        self,
+        docmap: dict[str, Document] | None = None,
+        embedding_model: Any = None,
+    ) -> None:
+        # the process-wide model unless a caller (a test) injects one
+        self.model = model if embedding_model is None else embedding_model
+        # HybridSearch passes the docmap it shares with the inverted index
+        self.docmap: dict[str, Document] = {} if docmap is None else docmap
+        # one row per chunk, aligned with chunk_metadata; None until the
+        # first chunk is embedded
+        self.chunk_embeddings: np.ndarray | None = None
+        self.chunk_metadata: list[dict] = []
 
     # generate an embedding using the model for a text
     def generate_embedding(self, text: str):
@@ -34,105 +38,88 @@ class SemanticIndex:
         embeddings = self.model.encode([text])
         return embeddings[0]
 
-    # build embeddings for the documents
+    # add or replace documents: drop the chunks of every given document id,
+    # then embed only these documents' chunks and append them, so the cost
+    # scales with the change rather than with the whole corpus
     def build_chunk_embeddings(self, documents: list[Document]):
-        self.documents = documents
-        # lists to keep chunks and chunk metedata
+        # the last copy of a repeated document id wins, as in the docmap
+        documents = list({document.id: document for document in documents}.values())
+        self._drop_chunks({document.id for document in documents})
+
         chunks = []
         chunk_metadata = []
-
-        # iterate over the documents
-        for i in range(len(documents)):
-            document = documents[i]
+        for document in documents:
             # keep the docmap current so chunks can always be hydrated back
-            # to their document through the stable document_id, regardless
-            # of whether build_chunk_embeddings is called directly (ingestion)
-            # or via create_or_load_chunk_embeddings
+            # to their document through the stable document_id
             self.docmap[document.id] = document
-            # if document content is empty move to the next iteration
-            if document.content == "":
-                continue
 
-            # create chunks from the document contents
+            # create chunks from the document contents; blank content has none
             curr_chunks = semantic_chunk(document.content, 4, 1)
-            # iterate over the chunks
-            for j in range(len(curr_chunks)):
-                # add curr_chunk to the chunks
-                chunks.append(curr_chunks[j])
-                # create chunk metada
-                metadata = {
-                    "document_id": document.id,
-                    "chunk_index": j,
-                    "total_chunks": len(curr_chunks),
-                }
-                # add chunk metadata to chunk metadata
-                chunk_metadata.append(metadata)
+            for j, chunk in enumerate(curr_chunks):
+                chunks.append(chunk)
+                chunk_metadata.append(
+                    {
+                        "document_id": document.id,
+                        "chunk_index": j,
+                        "total_chunks": len(curr_chunks),
+                    }
+                )
 
-        # create embeddings from the chunks
-        self.chunk_embeddings = self.model.encode(chunks)
-        # assign chunk metadata
-        self.chunk_metadata = chunk_metadata
-
-        # upload chunk embedings and chunk metadata to the storage
-        try:
-            # chunk embeddings
-            self.storage.upload_data("chunk_embeddings", self.chunk_embeddings)
-            # metadata
-            self.storage.upload_data("chunk_metadata", self.chunk_metadata)
-        except ValueError as e:
-            logger.error(
-                "a value error occured while trying to upload the semantic index: %s", e
-            )
-            return None
-        except ClientError as e:
-            logger.error(
-                "a client error occured while trying to upload the semantic index: %s",
-                e,
-            )
-            return None
-        except ResponseError as e:
-            logger.error(
-                "a response error occured while trying to upload the semantic index: %s",
-                e,
-            )
-            return None
+        if chunks:
+            embeddings = np.asarray(self.model.encode(chunks))
+            if self.chunk_embeddings is None or len(self.chunk_embeddings) == 0:
+                self.chunk_embeddings = embeddings
+            else:
+                self.chunk_embeddings = np.vstack([self.chunk_embeddings, embeddings])
+            self.chunk_metadata.extend(chunk_metadata)
 
         return self.chunk_embeddings
 
-    # load or create chunk embeddings
-    def create_or_load_chunk_embeddings(self, documents: list[Document]):
-        self.documents = documents
-        # iterate over the documents and create the docmap
-        for i in range(len(self.documents)):
-            self.docmap[self.documents[i].id] = self.documents[i]
+    # remove a document's chunks and its docmap entry; also the delete path
+    def remove_document(self, doc_id: str) -> None:
+        self._drop_chunks({doc_id})
+        self.docmap.pop(doc_id, None)
 
-        # check if chunk embeddings and chunk metadata is already built
-        chunk_embeddings = self.storage.load_data("chunk_embeddings")
-        chunk_metadata = self.storage.load_data("chunk_metadata")
-        # use explicit None checks: chunk_embeddings is a numpy array and
-        # evaluating it in a boolean context raises ValueError
-        if chunk_metadata is not None and chunk_embeddings is not None:
-            self.chunk_embeddings = chunk_embeddings
-            self.chunk_metadata = chunk_metadata
-            return self.chunk_embeddings
+    # the persisted state; the docmap is saved once, by HybridSearch
+    def export_parts(self) -> dict[str, Any]:
+        return {
+            "chunk_embeddings": self.chunk_embeddings,
+            "chunk_metadata": self.chunk_metadata,
+        }
 
-        # otherwise build the embeddings
-        return self.build_chunk_embeddings(documents)
+    # restore state saved by export_parts; never builds anything
+    def restore_parts(self, parts: dict[str, Any]) -> None:
+        embeddings = parts["chunk_embeddings"]
+        metadata = parts["chunk_metadata"]
+        rows = 0 if embeddings is None else len(embeddings)
+        if rows != len(metadata):
+            raise ValueError(
+                f"chunk_embeddings has {rows} rows but chunk_metadata has "
+                f"{len(metadata)} entries"
+            )
+        self.chunk_embeddings = embeddings
+        self.chunk_metadata = metadata
+
+    # drop the embedding rows and metadata of the given documents together,
+    # so the two stay aligned
+    def _drop_chunks(self, doc_ids: set[str]) -> None:
+        if self.chunk_embeddings is None:
+            return
+        keep = [
+            i
+            for i, metadata in enumerate(self.chunk_metadata)
+            if metadata["document_id"] not in doc_ids
+        ]
+        if len(keep) == len(self.chunk_metadata):
+            return
+        self.chunk_embeddings = self.chunk_embeddings[keep]
+        self.chunk_metadata = [self.chunk_metadata[i] for i in keep]
 
     # semantic chunk search
     def search_chunks(self, query: str, limit: int = SEARCH_LIMIT):
-        # make sure chunk embeddings exists
-        if self.chunk_embeddings is None:
-            raise ValueError("chunk embedings is none")
-
-        # make sure chunk metadata exists
-        if self.chunk_metadata is None:
-            raise ValueError("chunk metadata is none")
-
-        # if the documents do not exist
-        if self.documents is None:
-            raise ValueError("documents is none")
-
+        # nothing to search: an empty index, or a blank query
+        if self.chunk_embeddings is None or not self.chunk_metadata:
+            return []
         if not query.strip():
             return []
 

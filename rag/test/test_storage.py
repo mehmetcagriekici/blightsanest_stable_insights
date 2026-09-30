@@ -138,3 +138,69 @@ class TestLoadData:
         # get the result from the storage, must be none
         result = storage.load_data("doc.pkl")
         assert result is None
+
+    # R29 regression: only a missing key means "no data"; any other s3
+    # failure must surface instead of looking like an unbuilt index
+    @pytest.mark.parametrize("code", ["AccessDenied", "SlowDown", "500"])
+    def test_load_other_s3_errors_raise(self, storage, code):
+        storage.redis_connection.get.return_value = None
+        storage.s3_client.get_object.side_effect = ClientError(
+            {"Error": {"Code": code}}, "GetObject"
+        )
+        with pytest.raises(ClientError):
+            storage.load_data("doc.pkl")
+
+    # an unreadable cached value is a cache miss, not an error
+    def test_load_corrupt_cache_falls_back_to_s3(self, storage):
+        storage.redis_connection.get.return_value = b"garbage"
+        body = Mock()
+        body.read.return_value = b"s3data"
+        storage.s3_client.get_object.return_value = {"Body": body}
+        storage.type_converter.deserialize.side_effect = [ValueError("bad"), {"x": 1}]
+
+        assert storage.load_data("doc.pkl") == {"x": 1}
+        storage.s3_client.get_object.assert_called_once()
+
+    # cache=False reads s3 directly, for mutable keys like the manifest
+    def test_load_without_cache_skips_redis(self, storage):
+        body = Mock()
+        body.read.return_value = b"s3data"
+        storage.s3_client.get_object.return_value = {"Body": body}
+        storage.type_converter.deserialize.return_value = {"x": 1}
+
+        assert storage.load_data("doc.pkl", cache=False) == {"x": 1}
+        storage.redis_connection.get.assert_not_called()
+
+
+class TestCacheConsistency:
+    def test_upload_without_cache_skips_redis(self, storage):
+        storage.type_converter.serialize.return_value = b"serialized"
+        storage.upload_data("doc.pkl", {"a": 1}, cache=False)
+        storage.s3_client.put_object.assert_called_once()
+        storage.redis_connection.set.assert_not_called()
+
+    # R27 regression: a failed redis write must not leave an older cached
+    # value behind that s3 no longer holds
+    def test_failed_redis_write_drops_the_cached_value(self, storage):
+        storage.type_converter.serialize.return_value = b"serialized"
+        storage.redis_connection.set.side_effect = ResponseError("redis failure")
+        storage.upload_data("doc.pkl", {"a": 1})
+        storage.redis_connection.delete.assert_called_once_with(
+            "users/test_user/doc.pkl"
+        )
+
+    # if redis is fully down the drop fails too; that must stay non-fatal
+    def test_failed_redis_write_and_drop_is_non_fatal(self, storage):
+        storage.type_converter.serialize.return_value = b"serialized"
+        storage.redis_connection.set.side_effect = ResponseError("down")
+        storage.redis_connection.delete.side_effect = ResponseError("down")
+        storage.upload_data("doc.pkl", {"a": 1})
+
+    def test_delete_removes_from_s3_and_redis(self, storage):
+        storage.delete_data("doc.pkl")
+        storage.s3_client.delete_object.assert_called_once_with(
+            Bucket="test_bucket", Key="users/test_user/doc.pkl"
+        )
+        storage.redis_connection.delete.assert_called_once_with(
+            "users/test_user/doc.pkl"
+        )

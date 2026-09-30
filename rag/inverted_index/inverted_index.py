@@ -1,32 +1,27 @@
 import itertools
-import logging
 import math
 from collections import Counter, OrderedDict, defaultdict
-
-from botocore.exceptions import ClientError
-from redis import ResponseError
+from typing import Any
 
 from constants.constants import BM25_B, BM25_K1, SEARCH_LIMIT
 from custom_types.custom_types import Document
 from helpers.helpers import tokenize
-from storage.storage import Storage
-
-logger = logging.getLogger(__name__)
 
 
 class InvertedIndex:
-    def __init__(self, storage: Storage) -> None:
+    # the parts this index contributes to a saved snapshot (see HybridSearch)
+    PARTS = ("inverted_index", "term_frequencies", "doc_lengths")
+
+    def __init__(self, docmap: dict[str, Document] | None = None) -> None:
         # a dictionary mapping tokens to set of document ids
         self.index: dict[str, set[str]] = {}
-        # a dictionary mapping document ids to their full document objects
-        self.docmap = {}
+        # a dictionary mapping document ids to their full document objects;
+        # HybridSearch passes the docmap it shares with the semantic index
+        self.docmap: dict[str, Document] = {} if docmap is None else docmap
         # a dictonary mapping document ids to term frequencies
         self.term_frequencies = defaultdict(Counter)
         # a dictionary mapping document ids to their lengths
         self.doc_lengths: dict[str, int] = {}
-
-        # storage for indexes, docmap, term_frequencies, and document lengths
-        self.storage = storage
 
     # tokenize document content (text), add each token to the index with the document id
     def add_document(self, text: str, doc_id: str) -> None:
@@ -74,43 +69,19 @@ class InvertedIndex:
             self.docmap[doc.id] = doc
             self.add_document(doc.content, doc.id)
 
-    # save to index, docmap, term frequencies, and doc lengths
-    def save(self):
-        try:
-            self.storage.upload_data("inverted_index", self.index)
-            self.storage.upload_data("docmap", self.docmap)
-            self.storage.upload_data("term_frequencies", self.term_frequencies)
-            self.storage.upload_data("doc_lengths", self.doc_lengths)
-        except ValueError as e:
-            logger.error(
-                "a value error occured while trying to save the inverted index: %s", e
-            )
-        except ClientError as e:
-            logger.error(
-                "a client error occured while trying to save the inverted index: %s", e
-            )
-        except ResponseError as e:
-            logger.error(
-                "a response error occured while trying to save the inverted index: %s",
-                e,
-            )
+    # the persisted state; the docmap is saved once, by HybridSearch
+    def export_parts(self) -> dict[str, Any]:
+        return {
+            "inverted_index": self.index,
+            "term_frequencies": self.term_frequencies,
+            "doc_lengths": self.doc_lengths,
+        }
 
-    # load index, term frequencies, document length, and docmap
-    def load(self, documents: list[Document]):
-        index = self.storage.load_data("inverted_index")
-        docmap = self.storage.load_data("docmap")
-        tf = self.storage.load_data("term_frequencies")
-        doc_lengths = self.storage.load_data("doc_lengths")
-
-        # if one of them is none build the index
-        if index is None or docmap is None or tf is None or doc_lengths is None:
-            self.build(documents)
-            self.save()
-        else:
-            self.index = index
-            self.docmap = docmap
-            self.term_frequencies = tf
-            self.doc_lengths = doc_lengths
+    # restore state saved by export_parts; never builds anything
+    def restore_parts(self, parts: dict[str, Any]) -> None:
+        self.index = parts["inverted_index"]
+        self.term_frequencies = parts["term_frequencies"]
+        self.doc_lengths = parts["doc_lengths"]
 
     # get the frequency of a single token
     def get_tf(self, doc_id: str, token: str) -> int:

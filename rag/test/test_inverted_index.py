@@ -9,21 +9,16 @@ from inverted_index.inverted_index import InvertedIndex
 from type_converter.type_converter import TypeConverter
 
 
-# in-memory storage that round-trips through the real TypeConverter, so
-# save/load exercises the same serialization as S3 and Redis
-class FakeStorage:
-    def __init__(self) -> None:
-        self.objects: dict[str, bytes] = {}
-        self.converter = TypeConverter()
-        self.converter.register_pydantic_models(Document)
-
-    def upload_data(self, document_name, data):
-        self.objects[document_name] = self.converter.serialize(data)
-
-    def load_data(self, document_name):
-        if document_name not in self.objects:
-            return None
-        return self.converter.deserialize(self.objects[document_name])
+# export -> serialize -> deserialize -> restore, as a snapshot save and load
+# does, so persistence exercises the real TypeConverter
+def reload(index: InvertedIndex) -> InvertedIndex:
+    converter = TypeConverter()
+    converter.register_pydantic_models(Document)
+    parts = converter.deserialize(converter.serialize(index.export_parts()))
+    docmap = converter.deserialize(converter.serialize(index.docmap))
+    loaded = InvertedIndex(docmap)
+    loaded.restore_parts(parts)
+    return loaded
 
 
 DOCUMENTS = [
@@ -35,7 +30,7 @@ DOCUMENTS = [
 
 @pytest.fixture
 def index() -> InvertedIndex:
-    index = InvertedIndex(FakeStorage())
+    index = InvertedIndex()
     index.build(DOCUMENTS)
     return index
 
@@ -49,7 +44,7 @@ class TestBuild:
         assert index.get_tf("doc1", "cat") == 3
 
     def test_drops_stopwords_and_lowercases(self):
-        index = InvertedIndex(FakeStorage())
+        index = InvertedIndex()
         index.build([Document(id="d", content="The Cat and the Hat")])
         assert set(index.index) == {"cat", "hat"}
 
@@ -58,7 +53,7 @@ class TestBuild:
         assert index.get_tf("missing", "cat") == 0
 
     def test_empty_index_has_zero_average_length(self):
-        assert InvertedIndex(FakeStorage()).get_avg_doc_length() == 0.0
+        assert InvertedIndex().get_avg_doc_length() == 0.0
 
 
 class TestBm25Scoring:
@@ -105,18 +100,12 @@ class TestBm25Search:
 
 
 class TestPersistence:
-    # a saved index loads back with identical scores
-    def test_save_then_load_round_trip(self, index):
-        index.save()
-        assert set(index.storage.objects) == {
-            "inverted_index",
-            "docmap",
-            "term_frequencies",
-            "doc_lengths",
-        }
+    def test_exports_its_parts_but_not_the_docmap(self, index):
+        assert set(index.export_parts()) == set(InvertedIndex.PARTS)
 
-        loaded = InvertedIndex(index.storage)
-        loaded.load([])
+    # a saved index loads back with identical scores
+    def test_export_then_restore_round_trip(self, index):
+        loaded = reload(index)
 
         assert loaded.index == index.index
         assert loaded.docmap == index.docmap
@@ -157,8 +146,6 @@ class TestUpdateAndDelete:
 
     # a loaded index (defaultdict restored from storage) supports removal too
     def test_remove_after_load(self, index):
-        index.save()
-        loaded = InvertedIndex(index.storage)
-        loaded.load([])
+        loaded = reload(index)
         loaded.remove_document("doc1")
         assert loaded.get_documents("cat") == {"doc2"}

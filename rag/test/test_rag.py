@@ -9,7 +9,12 @@ from redis.exceptions import RedisError
 from config.config import Config
 from custom_types.custom_types import Document, User
 from rag.rag import RAG
-from search.hybrid_search import HybridSearch
+from search.hybrid_search import (
+    MANIFEST,
+    SNAPSHOT_PARTS,
+    HybridSearch,
+    IndexNotBuiltError,
+)
 from storage.clients import create_redis_client, create_s3_client
 from storage.storage import Storage
 
@@ -26,7 +31,7 @@ def redis_connection(config) -> redis.Redis:
 
 # S3 is a fresh moto mock per test, but Redis may be a real, shared instance.
 # A unique user per run means no cached keys from an earlier run can match,
-# so phase 1 really builds; the run's own keys are removed afterwards
+# so the index really is built by this run; the run's own keys are removed afterwards
 @pytest.fixture
 def e2e_user(redis_connection):
     user = User(id=f"e2e-{uuid4().hex}")
@@ -49,9 +54,9 @@ class TestRagEnd2End:
     ):
         """
         Full e2e flow:
-        1. Create indexes with documents
-        2. Save to S3 + Redis
-        3. Load fresh indexes from storage
+        1. Querying before ingestion fails without building anything
+        2. Ingestion builds both indexes and saves one snapshot to S3 + Redis
+        3. A fresh query-path load reads that snapshot
         4. Run search
         5. Run RAG with mock LLM
         6. Assert response
@@ -63,37 +68,41 @@ class TestRagEnd2End:
             # clients are created once and shared, as the service will do
             s3 = create_s3_client(config)
             s3.create_bucket(Bucket=config.bucket_name)
-
-            # --- PHASE 1: Build and save indexes ---
             storage = Storage(e2e_user, config.bucket_name, s3, redis_connection)
-            search = HybridSearch(storage, mock_documents)
 
-            # Verify indexes were built and saved to S3, the source of truth
-            assert len(search.inverted_index.index) > 0
-            assert search.semantic_index.chunk_embeddings is not None
+            # --- PHASE 1: The query path never builds ---
+            with pytest.raises(IndexNotBuiltError):
+                HybridSearch.load(storage)
+
+            # --- PHASE 2: Ingestion builds and saves ---
+            search = HybridSearch.load_or_empty(storage)
+            search.build(mock_documents)
+            search.save()
+
+            # Verify every part and the manifest reached S3, the source of truth
+            version = search.manifest["version"]
             saved = s3.list_objects_v2(
                 Bucket=config.bucket_name, Prefix=f"users/{e2e_user.id}/"
             )
-            assert {obj["Key"].rsplit("/", 1)[1] for obj in saved["Contents"]} == {
-                "inverted_index",
-                "docmap",
-                "term_frequencies",
-                "doc_lengths",
-                "chunk_embeddings",
-                "chunk_metadata",
+            assert {obj["Key"] for obj in saved["Contents"]} == {
+                f"users/{e2e_user.id}/{MANIFEST}"
+            } | {
+                f"users/{e2e_user.id}/snapshots/{version}/{part}"
+                for part in SNAPSHOT_PARTS
             }
 
-            # --- PHASE 2: Load fresh instances (simulate new request) ---
+            # --- PHASE 3: Load a fresh instance (simulate a new request) ---
             storage_reloaded = Storage(
                 e2e_user, config.bucket_name, s3, redis_connection
             )
-            search_reloaded = HybridSearch(storage_reloaded, mock_documents)
+            search_reloaded = HybridSearch.load(storage_reloaded)
 
             # Verify indexes loaded from storage
+            assert search_reloaded.manifest == search.manifest
             assert len(search_reloaded.inverted_index.index) > 0
             assert search_reloaded.semantic_index.chunk_embeddings is not None
 
-            # --- PHASE 3: Search ---
+            # --- PHASE 4: Search ---
             results = search_reloaded.rrf_search("felt anxious")
             assert len(results) > 0
             assert results[0]["doc_id"] == "doc1"
@@ -105,7 +114,7 @@ class TestRagEnd2End:
                 for result in results
             ]
 
-            # --- PHASE 4: RAG ---
+            # --- PHASE 5: RAG ---
             async def mock_generate(user_prompt: str, system_prompt: str) -> str:
                 return json.dumps(
                     {
@@ -117,6 +126,6 @@ class TestRagEnd2End:
             rag = RAG(generate=mock_generate)
             rag_results = await rag.rag("What made me anxious?", retrieved_documents)
 
-            # --- PHASE 5: Assert ---
+            # --- PHASE 6: Assert ---
             assert rag_results.status == "found"
             assert rag_results.response == "You felt anxious about your presentation."

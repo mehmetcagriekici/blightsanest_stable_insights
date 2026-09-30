@@ -25,18 +25,17 @@ API (Go) ──gRPC (planned)──▶ RAG (Python) ──▶ S3 (source of trut
 ## Pipeline
 
 ```
-documents ─▶ InvertedIndex.build()/save() ─────────┐
-          └▶ SemanticIndex.build_chunk_embeddings() ┴─▶ Storage (S3 + Redis)
+ingestion ─▶ HybridSearch.load_or_empty(storage)
+          ─▶ build(documents) / remove_documents(ids)   (BM25 + embeddings, in memory)
+          ─▶ save() ─▶ new snapshot + manifest ─▶ Storage (S3 + Redis)
 
-query ─▶ HybridSearch (load indexes) ─▶ BM25 + semantic ─▶ RRF ─▶ top documents
+query ─▶ HybridSearch.load(storage) ─▶ BM25 + semantic ─▶ RRF ─▶ top documents
       ─▶ RAG.rag(query, documents) ─▶ LLM ─▶ RagResponse{status, response}
 ```
 
-1. **Indexing** builds the BM25 index and chunk embeddings, then saves them through `Storage`.
-2. **Search** loads the user's indexes, scores documents with BM25 and with embedding similarity, then fuses both rankings with Reciprocal Rank Fusion.
+1. **Indexing** (ingestion only) adds, replaces, or removes documents in both indexes, then `save()` writes them as one snapshot. Only changed documents are re-embedded.
+2. **Search** loads the user's saved snapshot and never builds one: with no saved index, `HybridSearch.load()` raises `IndexNotBuiltError`. It scores documents with BM25 and with embedding similarity, then fuses both rankings with Reciprocal Rank Fusion.
 3. **Generation** sends the query and the retrieved documents to the injected LLM, which must answer in JSON with `status` (`found` / `not found`) and `response`.
-
-> Indexes are meant to be built only at ingestion time. Currently `HybridSearch.__init__` still builds and saves an index when none exists in storage (see `CODE_ISSUES.md`, R3).
 
 ---
 
@@ -44,12 +43,12 @@ query ─▶ HybridSearch (load indexes) ─▶ BM25 + semantic ─▶ RRF ─�
 
 | Path | What it does |
 |------|--------------|
-| `inverted_index/` | `InvertedIndex`: BM25 from scratch (k1 = 1.5, b = 0.75). Token → doc IDs, term frequencies, doc lengths, docmap. `build()` (re-adding a `doc_id` replaces it), `remove_document()`, `save()`, `load()`, `bm25_search()`. |
-| `semantic_index/` | `SemanticIndex(storage)`: sentence-transformer embeddings over chunks of 4 sentences with 1 overlapping (sentences split on `.`, `!`, `?` and line breaks). The model named by `SENTENCE_TRANSFORMERS_MODEL_NAME` is loaded once per process, when the module is imported. Chunk metadata: `document_id`, `chunk_index`, `total_chunks`. A document's score is its best chunk's cosine similarity, and its result carries that chunk's metadata; chunks resolve to documents through `docmap` by `document_id`. A blank query returns `[]`. |
-| `search/` | `HybridSearch(storage, documents)`: loads both indexes for a user, fuses BM25 and semantic ranks with RRF (k = 60) over the union of results, and returns at most `limit` results (default 50). A blank query returns `[]`. |
+| `inverted_index/` | `InvertedIndex(docmap)`: BM25 from scratch (k1 = 1.5, b = 0.75). Token → doc IDs, term frequencies, doc lengths. `build()` (re-adding a `doc_id` replaces it), `remove_document()`, `bm25_search()`, and `export_parts()` / `restore_parts()` for the snapshot. No storage access of its own. |
+| `semantic_index/` | `SemanticIndex(docmap)`: sentence-transformer embeddings over chunks of 4 sentences with 1 overlapping (sentences split on `.`, `!`, `?` and line breaks). The model named by `SENTENCE_TRANSFORMERS_MODEL_NAME` is loaded once per process, when the module is imported. Chunk metadata: `document_id`, `chunk_index`, `total_chunks`. A document's score is its best chunk's cosine similarity, and its result carries that chunk's metadata; chunks resolve to documents through `docmap` by `document_id`. `build_chunk_embeddings()` is incremental: it drops the given documents' chunks and embeds only those documents. `remove_document()`, and `export_parts()` / `restore_parts()` (which rejects embeddings and metadata of different lengths). A blank query or an empty index returns `[]`. |
+| `search/` | `HybridSearch`: owns one user's two indexes, their shared docmap, and their persistence (see Storage Layout). `load(storage)` for queries, `load_or_empty(storage)` + `build()` / `remove_documents()` + `save()` for ingestion. Raises `IndexNotBuiltError` (no saved index) or `CorruptIndexError` (snapshot parts missing or inconsistent). Fuses BM25 and semantic ranks with RRF (k = 60) over the union of results, and returns at most `limit` results (default 50). A blank query returns `[]`. |
 | `rag/` | `RAG`: prompt construction and JSON response parsing. The LLM function is injected via the constructor; `RAG` never selects a provider. Replies may be wrapped in ```` ```json ```` fences; `status` must be `found` or `not found`. Every invalid reply raises `ValueError`. |
 | `llm/` | LLM providers with the signature `async (user_content, system_content) -> str \| None`. `ollama_provider.py` → `llm_ollama` (development); `bedrock.py` → `llm_bedrock` (production, Converse API). Errors are logged and returned as `None`. |
-| `storage/` | `Storage(user, bucket_name, s3_client, redis_connection)`: `upload_data(name, data)` writes to S3 then Redis (TTL 3600s); `load_data(name)` reads Redis first, falls back to S3. Redis errors are logged and never fatal. `clients.py` creates the shared S3 and Redis clients once from `Config`. |
+| `storage/` | `Storage(user, bucket_name, s3_client, redis_connection)`: `upload_data(name, data)` writes to S3 then Redis (TTL 3600s); `load_data(name)` reads Redis first, falls back to S3; `delete_data(name)`. `cache=False` bypasses Redis. `load_data` returns `None` only when the object doesn't exist; any other S3 error raises. Redis errors and unreadable cached values are logged and never fatal, and a failed Redis write drops the cached key. `clients.py` creates the shared S3 and Redis clients once from `Config`. |
 | `type_converter/` | `TypeConverter`: MessagePack serialization with a type registry for set, tuple, Counter, OrderedDict, defaultdict, numpy arrays, and registered Pydantic models. Serializing an unregistered model, or deserializing an unknown type tag, raises `TypeError`. |
 | `config/` | `Config` (bucket, region, Redis host/port) and `load_config()`, which reads it once from environment variables. |
 | `custom_types/` | Pydantic models: `Document`, `User` (just `id`), `RagResponse` (`custom_types.py`); `DbUser`, `DbDocument` mirroring DB rows (`db_types.py`). |
@@ -62,18 +61,23 @@ query ─▶ HybridSearch (load indexes) ─▶ BM25 + semantic ─▶ RRF ─�
 
 ## Storage Layout
 
-Each object is a MessagePack blob keyed per user, in both S3 and Redis:
+Each user's index is saved as a versioned snapshot of MessagePack blobs, plus a manifest naming the live one:
 
 ```
-{bucket}/users/{user_id}/inverted_index
-{bucket}/users/{user_id}/docmap
-{bucket}/users/{user_id}/term_frequencies
-{bucket}/users/{user_id}/doc_lengths
-{bucket}/users/{user_id}/chunk_embeddings
-{bucket}/users/{user_id}/chunk_metadata
+{bucket}/users/{user_id}/manifest                      {"version": ..., "previous": ...}
+{bucket}/users/{user_id}/snapshots/{version}/docmap
+{bucket}/users/{user_id}/snapshots/{version}/inverted_index
+{bucket}/users/{user_id}/snapshots/{version}/term_frequencies
+{bucket}/users/{user_id}/snapshots/{version}/doc_lengths
+{bucket}/users/{user_id}/snapshots/{version}/chunk_embeddings
+{bucket}/users/{user_id}/snapshots/{version}/chunk_metadata
 ```
 
-S3 is the source of truth; Redis is a disposable hot cache and uses the same `users/{user_id}/{name}` keys. `Storage._key()` builds every key, so S3 and Redis always agree.
+`save()` writes every part under a new random `{version}`, then switches the manifest to it, so a reader sees either the old snapshot or the new one, never a mix. A failed save raises and leaves the previous snapshot live (and deletes the parts it had written). The live snapshot and the one before it are kept; older ones are deleted. Saves for one user must not run concurrently: the last manifest write wins.
+
+S3 is the source of truth; Redis is a disposable hot cache and uses the same keys. `Storage._key()` builds every key, so S3 and Redis always agree. Snapshot parts never change once written, so caching them is always safe; the manifest is the one mutable key and is never cached.
+
+S3 reports a missing key as `NoSuchKey` only if the reader has `s3:ListBucket` on the bucket; without it, S3 answers `AccessDenied`, which `Storage` treats as a failure. The service's IAM role therefore needs `s3:ListBucket` as well as `GetObject`, `PutObject`, and `DeleteObject`.
 
 No AWS keys appear in code or on `User`. The S3 client uses boto3's default credential chain: environment variables or `~/.aws` locally, the pod's IAM role on EKS. Per-user isolation comes from the key prefix. If your `~/.aws` profile was set up with `aws login`, boto3 needs the `botocore[crt]` extra to read it.
 
@@ -119,7 +123,13 @@ user = User(id="user_123")
 storage = Storage(user, config.bucket_name, s3_client, redis_connection)
 docs = [Document(id="doc1", content="Today I felt anxious about my presentation.")]
 
-search = HybridSearch(storage, docs)
+# ingestion: add or replace documents, then save one snapshot
+index = HybridSearch.load_or_empty(storage)
+index.build(docs)
+index.save()
+
+# query: load the saved snapshot (raises IndexNotBuiltError if there is none)
+search = HybridSearch.load(storage)
 results = search.rrf_search("felt anxious")
 
 retrieved = [Document(id=r["doc_id"], content=r["content"]) for r in results]
@@ -158,18 +168,19 @@ uv run pytest
 uv run pytest test/test_rag.py::TestRagEnd2End::test_full_pipeline -q
 ```
 
-106 tests in total:
+141 tests in total:
 
 | File | Tests | Covers |
 |------|-------|--------|
 | `test/test_type_converter.py` | 25 | Round trips for each supported type, nested structures, `defaultdict(Counter)` and pydantic models (the stored index shapes); unregistered models and unknown type tags raise |
 | `test/test_helpers.py` | 21 | `cosine_similarity` returns plain floats, `base_chunk` windows and its argument check, `semantic_chunk` (including line breaks), `tokenize` (stopwords, punctuation), fence stripping in `parse_json` |
-| `test/test_inverted_index.py` | 19 | `build()`, IDF / length-normalized TF / BM25 against hand-computed values, ranking and `limit`, save → load round trip, replacing and removing documents |
+| `test/test_inverted_index.py` | 20 | `build()`, IDF / length-normalized TF / BM25 against hand-computed values, ranking and `limit`, export → restore round trip, replacing and removing documents |
+| `test/test_storage.py` | 18 | Model registration, `users/{user_id}/` keys, upload and load paths, Redis-failure tolerance, only a missing key reads as `None`, corrupt cache falls back to S3, `cache=False`, failed Redis writes drop the key, `delete_data` |
+| `test/test_search.py` | 16 | RRF `limit`, blank queries, content from the shared docmap; snapshots on a real `Storage` over moto S3: the query path never builds, save → load, update and delete, pruning, failed saves keep the old snapshot, corrupt snapshots, S3 outages raise |
+| `test/test_semantic_index.py` | 13 | Incremental `build_chunk_embeddings` (only changed documents re-embedded), `remove_document`, export/restore and misaligned parts, best-chunk metadata, blank query and empty index (stub model) |
 | `test/test_llm.py` | 10 | Mocked `llm_ollama` and `llm_bedrock`: request shape, and `None` on model, connection, throttling, malformed-response and missing-region errors |
 | `test/test_rag_parsing.py` | 9 | Valid and fenced LLM replies accepted; invalid replies raise `ValueError` |
-| `test/test_storage.py` | 9 | Model registration, `users/{user_id}/` keys, upload (no Redis write after an S3 failure), Redis-failure tolerance, cache hit, S3 fallback, S3 failure |
 | `test/test_config.py` | 8 | `load_config()` defaults, environment, invalid values; client factories use the config; the Redis client fails fast (no retries) |
-| `test/test_search.py` | 4 | RRF `limit`, blank queries, best-chunk metadata (stub model, no real embeddings) |
-| `test/test_rag.py` | 1 | End-to-end: build → save to S3 → reload → RRF search → `RAG` with a mocked LLM |
+| `test/test_rag.py` | 1 | End-to-end: the query path refuses an unbuilt index → ingestion build + save → fresh load → RRF search → `RAG` with a mocked LLM |
 
 S3 is mocked with moto (`mock_aws`). Async tests use pytest-asyncio in strict mode (`pytest.ini`). Storage tests use mock clients. The e2e test uses a real Redis at `localhost:6379` if one is running, and otherwise falls back to (mocked) S3. It runs as a new random user each time, so cached keys from earlier runs can't stand in for the build, and it deletes its own Redis keys afterwards.
