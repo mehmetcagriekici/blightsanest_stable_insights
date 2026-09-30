@@ -44,7 +44,8 @@
   - Token → document ID mapping, term frequencies, document lengths, docmap
 - ✅ `build()` / `save()` / `load()` entry points
 - ✅ Persisted via `Storage` as MessagePack blobs: `inverted_index`, `docmap`, `term_frequencies`, `doc_lengths`
-- ⚠️ Re-adding or deleting documents isn't handled (R26); punctuation tokens match queries (R31)
+- ✅ Re-adding a document replaces its old entry; `remove_document()` deletes one
+- ✅ Tokens with no letters or digits (punctuation) are dropped
 
 #### 2.1.4 Semantic Index (`rag/semantic_index/`)
 - ✅ Sentence Transformers model named by `SENTENCE_TRANSFORMERS_MODEL_NAME` (e.g. `all-MiniLM-L6-v2`, 384-dim), loaded once per process
@@ -94,7 +95,7 @@
 ### 2.2 What Remains for Phase 1 ⏳
 
 #### 2.2.1 Bedrock Validation
-- ⏳ Unit tests for `llm_bedrock` with mocked Converse responses (success, client error, malformed shape)
+- ✅ Unit tests for `llm_bedrock` with mocked Converse responses (success, client error, malformed shape, missing region)
 - ⏳ Integration test against real Bedrock (dev account)
 - ⏳ Benchmark Ollama vs Bedrock (quality, latency, cost)
 
@@ -109,12 +110,12 @@
 #### 2.2.3 Pre-Built Index Enforcement
 - ⏳ `HybridSearch.__init__` currently calls `create_or_load_chunk_embeddings()` and `InvertedIndex.load()`, which build and save the index if storage is empty. Split this so the query path only loads, and building happens only at ingestion (R3)
 - ⏳ Make saves fail loudly and keep index parts consistent (R7, R8, R30)
-- ⏳ Support updating and deleting documents in the BM25 index (R26), and share one docmap between the indexes (R32)
+- ⏳ Share one docmap between the indexes (R32)
 
 #### 2.2.4 Test Coverage
-- ✅ Unit tests for chunking helpers, `SemanticIndex.search_chunks`, `HybridSearch.rrf_search`, LLM reply parsing, config
-- ⏳ Unit tests for `InvertedIndex` (BM25 scoring)
-- ⏳ Tests for `llm_ollama` / `llm_bedrock`
+- ✅ Unit tests for chunking helpers, tokenizing, `SemanticIndex.search_chunks`, `HybridSearch.rrf_search`, LLM reply parsing, config
+- ✅ Unit tests for `InvertedIndex` (BM25 scoring, save/load round trip, update and delete)
+- ✅ Mocked tests for `llm_ollama` / `llm_bedrock`
 - ⏳ Isolate the e2e test from leftover Redis data (R28)
 
 #### 2.2.5 Tooling & Production Readiness
@@ -403,9 +404,9 @@ Phase 2 (DB)  ──┼─→ Phase 3 (API) → Phase 4 (gRPC) → Phase 5 (PubS
 
 1. Isolate the e2e test from Redis (R28), so it reliably exercises the build path
 2. Disable redis-py retries (R5)
-3. Redesign build vs. load: queries only load, ingestion builds and saves, saves fail loudly and consistently (R3, R7, R8, R30, R26, R29, R32)
-4. Drop stale cache entries on failed Redis writes (R27); stop punctuation from matching (R31)
-5. Bedrock tests (mocked + real) and BM25 unit tests
+3. Redesign build vs. load: queries only load, ingestion builds and saves, saves fail loudly and consistently (R3, R7, R8, R30, R29, R32)
+4. Drop stale cache entries on failed Redis writes (R27)
+5. Bedrock integration test against a real dev account
 
 The full list of open problems, with locations, is in `CODE_ISSUES.md`.
 
