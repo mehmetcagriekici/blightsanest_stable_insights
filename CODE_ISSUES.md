@@ -18,11 +18,9 @@ Lower-severity logic inconsistencies and performance problems are listed separat
 | # | Location | Issue | Impact |
 |---|----------|-------|--------|
 | R3 | `rag/search/hybrid_search.py:11-23`, `rag/inverted_index/inverted_index.py:84-98`, `rag/semantic_index/semantic_index.py:103-120` | `HybridSearch.__init__` loads indexes, but if storage is empty both `InvertedIndex.load()` and `create_or_load_chunk_embeddings()` build and save the index. | Violates the hard constraint "queries must never trigger indexing". A query can trigger a full build and write to S3. |
-| R5 | `rag/storage/clients.py:16-22` | The Redis client has 2s socket timeouts, but redis-py 8.x retries timeouts by default (3 retries with exponential backoff). | Measured: one call to an unreachable (not refusing) Redis takes ~25s instead of 2s. An index load makes 6 Redis reads, so a query waits ~2.5 min before falling back to S3. Even a refused connection (Redis simply not running) takes ~3.2s per call because of the retries: with Redis down, `test_full_pipeline` takes 73s instead of ~10s. Undermines "Redis failures must never be fatal". |
 | R7 | `rag/semantic_index/semantic_index.py:77-100` | `build_chunk_embeddings` logs and returns `None` when the upload fails, after in-memory state has already been updated. | A failed write to S3, the source of truth, goes unnoticed. The index then exists only in memory and is lost when the process ends. |
 | R8 | `rag/inverted_index/inverted_index.py:63-81` | `InvertedIndex.save()` logs and swallows every storage error without returning or raising anything. | Same as R7, for the BM25 index. |
 | R27 | `rag/storage/storage.py:64-71` | If the S3 put succeeds but the Redis `set` fails, the error is logged and the old Redis value is left in place. Reads check Redis first. | For up to `redis_ttl` (1 hour), reads return data that no longer matches S3, the source of truth. The failed-set path should delete the key. |
-| R28 | `rag/test/test_rag.py:30-55` | The e2e test uses a fresh moto S3 per run but a real, never-flushed Redis. After a run, all six `users/test_user/*` keys remain in Redis with a 1-hour TTL. | On a rerun within the hour, "PHASE 1: Build and save" loads the old index from Redis and never builds. The test doesn't exercise what it claims, and fixture changes are checked against stale indexes. |
 | R29 | `rag/storage/storage.py:74-94` | `load_data` returns `None` for every `ClientError` (AccessDenied, throttling, etc.), not just NoSuchKey. `BotoCoreError` (e.g. connection failure) isn't caught. A corrupt Redis value makes msgpack raise instead of falling back to S3. | Combined with R3, a transient S3 error during a query looks like "index not built": the index is rebuilt from whatever `documents` were passed and overwrites S3. If that list was partial, data is lost. |
 | R30 | `rag/semantic_index/semantic_index.py:77-81`, `rag/inverted_index/inverted_index.py:63-68` | Index parts are uploaded as separate keys with no atomicity. If `chunk_embeddings` uploads and `chunk_metadata` fails, or only some of the four inverted-index keys upload, storage holds a mix of old and new parts. | `search_chunks` pairs embeddings with metadata by position (`self.chunk_metadata[i]`), so it raises `IndexError` or credits scores to the wrong document. Makes R7/R8 worse than "lost on restart". |
 | R32 | `rag/semantic_index/semantic_index.py:103-107`, `rag/inverted_index/inverted_index.py:66,84-98`, `rag/search/hybrid_search.py:80-84` | The two indexes use different docmaps. The inverted index persists its `docmap` to S3; the semantic index builds its own from the `documents` passed on every query and never persists it. `rrf_search` takes content from the semantic side if present, otherwise from the stored docmap. | The same `doc_id` can come back with different content depending on which search found it. Every query must also load every document's full content just to construct the indexes. |
@@ -58,10 +56,10 @@ Lower-severity logic inconsistencies and performance problems are listed separat
 
 | Area | Open |
 |------|------|
-| RAG (Python) | 9 |
+| RAG (Python) | 7 |
 | RAG (Python), lower severity | 3 |
 | API (Go) | 2 |
 | Database | 1 |
-| **Total** | **15** |
+| **Total** | **13** |
 
-Suggested order to address: R28, R3, R29, R7/R8/R30, R27, R32, R5, A3, A2, D1, then section 1.1.
+Suggested order to address: R3, R29, R7/R8/R30, R27, R32, A3, A2, D1, then section 1.1.

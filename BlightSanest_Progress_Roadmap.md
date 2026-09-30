@@ -85,7 +85,7 @@
   - `test_search.py` (4): RRF limit, blank queries, best-chunk metadata
   - `test_rag.py` (1): end-to-end build → save → reload → RRF search → `RAG` with a mocked `generate`
 - ✅ Infrastructure: pytest + pytest-asyncio (`asyncio_mode = strict`), moto `mock_aws`, `conftest.py` fixtures (user, documents), embedding model name set for tests
-- ⚠️ The e2e test doesn't clear Redis, so re-runs within an hour use the cached index (R28)
+- ✅ The e2e test runs as a new random user each time and deletes its own Redis keys, so it always exercises the build path
 
 #### 2.1.9 Local Development Environment
 - ✅ Docker Compose: PostgreSQL 15 Alpine, Redis 7 Alpine, Ollama — shared `blightsanest_network`
@@ -103,7 +103,7 @@
 - ✅ Key prefix `users/{user_id}/`
 - ✅ Credentials: per-user secrets removed from `User`; one service identity via boto3's default credential chain (IAM role on EKS)
 - ⏳ Repopulate Redis on S3 fallback (currently a cache miss does not write back)
-- 🟡 Redis socket timeouts (2s) are in place; redis-py's default retries still stretch a dead-Redis call to ~25s (R5)
+- ✅ Redis client fails fast: 2s socket timeouts and no retries
 - ⏳ Distinguish "not found" from other S3 errors in `load_data` (R29)
 - ⏳ Drop the cached value when a Redis write fails after a successful S3 write (R27)
 
@@ -116,7 +116,7 @@
 - ✅ Unit tests for chunking helpers, tokenizing, `SemanticIndex.search_chunks`, `HybridSearch.rrf_search`, LLM reply parsing, config
 - ✅ Unit tests for `InvertedIndex` (BM25 scoring, save/load round trip, update and delete)
 - ✅ Mocked tests for `llm_ollama` / `llm_bedrock`
-- ⏳ Isolate the e2e test from leftover Redis data (R28)
+- ✅ The e2e test is isolated from leftover Redis data
 
 #### 2.2.5 Tooling & Production Readiness
 - ✅ `uv` + `pyproject.toml` with Ruff in the `dev` group (no project Ruff config yet)
@@ -402,11 +402,9 @@ Phase 2 (DB)  ──┼─→ Phase 3 (API) → Phase 4 (gRPC) → Phase 5 (PubS
 
 ### 10.2 Phase 1 Next Actions
 
-1. Isolate the e2e test from Redis (R28), so it reliably exercises the build path
-2. Disable redis-py retries (R5)
-3. Redesign build vs. load: queries only load, ingestion builds and saves, saves fail loudly and consistently (R3, R7, R8, R30, R29, R32)
-4. Drop stale cache entries on failed Redis writes (R27)
-5. Bedrock integration test against a real dev account
+1. Redesign build vs. load: queries only load, ingestion builds and saves, saves fail loudly and consistently (R3, R7, R8, R30, R29, R32)
+2. Drop stale cache entries on failed Redis writes (R27)
+3. Bedrock integration test against a real dev account
 
 The full list of open problems, with locations, is in `CODE_ISSUES.md`.
 
