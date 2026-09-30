@@ -92,7 +92,7 @@ No AWS keys appear in code or on `User`. The S3 client uses boto3's default cred
 | `BEDROCK_MODEL_ID` | `llm_bedrock` | none (must be set) |
 | `SENTENCE_TRANSFORMERS_MODEL_NAME` | `semantic_index` (model loaded once at import) | none (required, e.g. `all-MiniLM-L6-v2`) |
 
-The Redis client uses 2-second connect and read timeouts. The Ollama model defaults to `gemma3`.
+The Redis client uses 2-second connect and read timeouts and no retries, so a down Redis costs at most 2 seconds before the S3 fallback. The Ollama model defaults to `gemma3`.
 
 ---
 
@@ -158,24 +158,18 @@ uv run pytest
 uv run pytest test/test_rag.py::TestRagEnd2End::test_full_pipeline -q
 ```
 
-| File | Covers |
-|------|--------|
-72 tests in total:
+106 tests in total:
 
 | File | Tests | Covers |
 |------|-------|--------|
-| `test/test_type_converter.py` | 27 | Serialization round trips for each supported type, nested structures, real index shapes; unregistered models and unknown type tags raise |
-| `test/test_helpers.py` | 14 | `cosine_similarity` returns plain floats, chunking (including line breaks), the `base_chunk` window check, fence stripping in `parse_json` |
-| `test/test_storage.py` | 10 | Model registration, `users/{user_id}/` keys, upload (no Redis write after an S3 failure), Redis-failure tolerance, cache hit, S3 fallback, S3 failure |
+| `test/test_type_converter.py` | 25 | Round trips for each supported type, nested structures, `defaultdict(Counter)` and pydantic models (the stored index shapes); unregistered models and unknown type tags raise |
+| `test/test_helpers.py` | 21 | `cosine_similarity` returns plain floats, `base_chunk` windows and its argument check, `semantic_chunk` (including line breaks), `tokenize` (stopwords, punctuation), fence stripping in `parse_json` |
+| `test/test_inverted_index.py` | 19 | `build()`, IDF / length-normalized TF / BM25 against hand-computed values, ranking and `limit`, save → load round trip, replacing and removing documents |
+| `test/test_llm.py` | 10 | Mocked `llm_ollama` and `llm_bedrock`: request shape, and `None` on model, connection, throttling, malformed-response and missing-region errors |
 | `test/test_rag_parsing.py` | 9 | Valid and fenced LLM replies accepted; invalid replies raise `ValueError` |
-| `test/test_config.py` | 7 | `load_config()` defaults, environment, invalid values; client factories use the config |
+| `test/test_storage.py` | 9 | Model registration, `users/{user_id}/` keys, upload (no Redis write after an S3 failure), Redis-failure tolerance, cache hit, S3 fallback, S3 failure |
+| `test/test_config.py` | 8 | `load_config()` defaults, environment, invalid values; client factories use the config; the Redis client fails fast (no retries) |
 | `test/test_search.py` | 4 | RRF `limit`, blank queries, best-chunk metadata (stub model, no real embeddings) |
-| `test/test_rag.py` | 1 | End-to-end: build → save → reload → RRF search → `RAG` with a mocked LLM |
+| `test/test_rag.py` | 1 | End-to-end: build → save to S3 → reload → RRF search → `RAG` with a mocked LLM |
 
-S3 is mocked with moto (`mock_aws`). Async tests use pytest-asyncio in strict mode (`pytest.ini`). Storage tests use mock clients. The e2e test uses a real Redis at `localhost:6379` if one is running, and otherwise falls back to (mocked) S3.
-
-The e2e test doesn't clear Redis, so a re-run within an hour loads the cached index instead of building it (`CODE_ISSUES.md`, R28). Until that's fixed, clear the test keys before a run that should rebuild:
-
-```bash
-uv run python -c "import redis; r=redis.Redis(); k=r.keys('users/test_user/*'); k and r.delete(*k)"
-```
+S3 is mocked with moto (`mock_aws`). Async tests use pytest-asyncio in strict mode (`pytest.ini`). Storage tests use mock clients. The e2e test uses a real Redis at `localhost:6379` if one is running, and otherwise falls back to (mocked) S3. It runs as a new random user each time, so cached keys from earlier runs can't stand in for the build, and it deletes its own Redis keys afterwards.

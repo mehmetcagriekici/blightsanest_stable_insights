@@ -1,5 +1,9 @@
+import socket
+import time
+
 import pytest
 from moto import mock_aws
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from config.config import Config, load_config
 from storage.clients import create_redis_client, create_s3_client
@@ -66,3 +70,20 @@ class TestClients:
         assert kwargs["port"] == 6380
         assert kwargs["socket_connect_timeout"] == 2
         assert kwargs["socket_timeout"] == 2
+        assert client.get_retry().get_retries() == 0
+
+    # R5 regression: redis-py's default retries turned one refused connection
+    # into ~4s (and a timeout into ~25s) before storage could fall back to s3
+    def test_redis_client_fails_fast_when_redis_is_down(self):
+        # grab a free port, then close it so nothing is listening there
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        client = create_redis_client(
+            Config(bucket_name="b", redis_host="127.0.0.1", redis_port=port)
+        )
+
+        start = time.monotonic()
+        with pytest.raises(RedisConnectionError):
+            client.get("key")
+        assert time.monotonic() - start < 1
