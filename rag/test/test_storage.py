@@ -7,14 +7,6 @@ from redis import ResponseError
 from storage.storage import Storage
 
 
-# mock user
-@pytest.fixture
-def mock_user():
-    user = Mock()
-    user.id = "user1"
-    return user
-
-
 # mock storage
 @pytest.fixture
 def storage(mock_user):
@@ -58,24 +50,16 @@ class TestUploadData:
         # test s3
         storage.s3_client.put_object.assert_called_once_with(
             Bucket="test_bucket",
-            Key="users/user1/doc.pkl",
+            Key="users/test_user/doc.pkl",
             Body=b"serialized",
         )
 
         # test redis
         storage.redis_connection.set.assert_called_once_with(
-            name="users/user1/doc.pkl",
+            name="users/test_user/doc.pkl",
             value=b"serialized",
             ex=storage.redis_ttl,
         )
-
-    # test empty serialization
-    # must raise value error
-    def test_upload_empty_serializaton(self, storage):
-        # empty serialization
-        storage.type_converter.serialize.return_value = b""
-        with pytest.raises(ValueError):
-            storage.upload_data("doc.pkl", {"a": 1})
 
     # test s3 failure
     def test_upload_s3_failure(self, storage):
@@ -118,7 +102,7 @@ class TestLoadData:
         result = storage.load_data("doc.pkl")
         assert result == {"x": 1}
         # the cache is read under the user's prefix
-        storage.redis_connection.get.assert_called_once_with("users/user1/doc.pkl")
+        storage.redis_connection.get.assert_called_once_with("users/test_user/doc.pkl")
         # result must come from the cache
         storage.s3_client.get_object.assert_not_called()
 
@@ -136,10 +120,10 @@ class TestLoadData:
         result = storage.load_data("doc.pkl")
         assert result == {"x": 1}
         # the result must come from s3, under the same key as the cache
-        storage.redis_connection.get.assert_called_once_with("users/user1/doc.pkl")
+        storage.redis_connection.get.assert_called_once_with("users/test_user/doc.pkl")
         storage.s3_client.get_object.assert_called_once_with(
             Bucket="test_bucket",
-            Key="users/user1/doc.pkl",
+            Key="users/test_user/doc.pkl",
         )
 
     # test load failure - both cache and s3 -

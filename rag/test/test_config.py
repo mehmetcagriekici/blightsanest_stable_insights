@@ -57,7 +57,7 @@ class TestClients:
             client = create_s3_client(Config(bucket_name="b", region="eu-west-1"))
         assert client.meta.region_name == "eu-west-1"
 
-    def test_redis_client_uses_config_and_fails_fast(self):
+    def test_redis_client_uses_config_and_timeouts(self):
         client = create_redis_client(
             Config(bucket_name="b", redis_host="redis", redis_port=6380)
         )

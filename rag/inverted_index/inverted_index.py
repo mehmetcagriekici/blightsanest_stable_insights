@@ -53,9 +53,24 @@ class InvertedIndex:
     def get_documents(self, token: str) -> set[str]:
         return self.index.get(token) or set()
 
-    # iterate over all the documents and add them to the docmap and the index
+    # remove every trace of a document from the index; also the delete path
+    def remove_document(self, doc_id: str) -> None:
+        # pop, not [], so the defaultdict does not insert an empty entry
+        for token in self.term_frequencies.pop(doc_id, {}):
+            postings = self.index.get(token)
+            if postings is not None:
+                postings.discard(doc_id)
+                # drop empty postings so the token stops matching in bm25_search
+                if not postings:
+                    del self.index[token]
+        self.doc_lengths.pop(doc_id, None)
+        self.docmap.pop(doc_id, None)
+
+    # iterate over all the documents and add them to the docmap and the index;
+    # a document that is already indexed is replaced, not stacked on
     def build(self, documents: list[Document]):
         for doc in documents:
+            self.remove_document(doc.id)
             self.docmap[doc.id] = doc
             self.add_document(doc.content, doc.id)
 

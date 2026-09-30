@@ -16,9 +16,10 @@ logger = logging.getLogger(__name__)
 # async function to get an llm response from aws bedrock via the converse api
 # (the converse api is model-agnostic - same request/response shape for any model)
 async def llm_bedrock(user_content: str, system_content: str) -> str | None:
-    client = boto3.client("bedrock-runtime", region_name=region_name)
-
     try:
+        # client creation raises NoRegionError (a BotoCoreError) when no region
+        # is configured, so it belongs inside the try as well
+        client = boto3.client("bedrock-runtime", region_name=region_name)
         # boto3 is synchronous, so run the call in a thread to avoid blocking
         # the event loop. the system prompt is a top-level parameter, not a
         # message role (converse messages only allow user/assistant)

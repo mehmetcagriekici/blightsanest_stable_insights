@@ -44,7 +44,7 @@ query ─▶ HybridSearch (load indexes) ─▶ BM25 + semantic ─▶ RRF ─�
 
 | Path | What it does |
 |------|--------------|
-| `inverted_index/` | `InvertedIndex`: BM25 from scratch (k1 = 1.5, b = 0.75). Token → doc IDs, term frequencies, doc lengths, docmap. `build()`, `save()`, `load()`, `bm25_search()`. |
+| `inverted_index/` | `InvertedIndex`: BM25 from scratch (k1 = 1.5, b = 0.75). Token → doc IDs, term frequencies, doc lengths, docmap. `build()` (re-adding a `doc_id` replaces it), `remove_document()`, `save()`, `load()`, `bm25_search()`. |
 | `semantic_index/` | `SemanticIndex(storage)`: sentence-transformer embeddings over chunks of 4 sentences with 1 overlapping (sentences split on `.`, `!`, `?` and line breaks). The model named by `SENTENCE_TRANSFORMERS_MODEL_NAME` is loaded once per process, when the module is imported. Chunk metadata: `document_id`, `chunk_index`, `total_chunks`. A document's score is its best chunk's cosine similarity, and its result carries that chunk's metadata; chunks resolve to documents through `docmap` by `document_id`. A blank query returns `[]`. |
 | `search/` | `HybridSearch(storage, documents)`: loads both indexes for a user, fuses BM25 and semantic ranks with RRF (k = 60) over the union of results, and returns at most `limit` results (default 50). A blank query returns `[]`. |
 | `rag/` | `RAG`: prompt construction and JSON response parsing. The LLM function is injected via the constructor; `RAG` never selects a provider. Replies may be wrapped in ```` ```json ```` fences; `status` must be `found` or `not found`. Every invalid reply raises `ValueError`. |
@@ -53,7 +53,7 @@ query ─▶ HybridSearch (load indexes) ─▶ BM25 + semantic ─▶ RRF ─�
 | `type_converter/` | `TypeConverter`: MessagePack serialization with a type registry for set, tuple, Counter, OrderedDict, defaultdict, numpy arrays, and registered Pydantic models. Serializing an unregistered model, or deserializing an unknown type tag, raises `TypeError`. |
 | `config/` | `Config` (bucket, region, Redis host/port) and `load_config()`, which reads it once from environment variables. |
 | `custom_types/` | Pydantic models: `Document`, `User` (just `id`), `RagResponse` (`custom_types.py`); `DbUser`, `DbDocument` mirroring DB rows (`db_types.py`). |
-| `helpers/` | Tokenizing (NLTK, English stopwords), cosine similarity, chunking, RRF score, JSON parsing. |
+| `helpers/` | Tokenizing (NLTK, lowercased, English stopwords and punctuation-only tokens dropped), cosine similarity, chunking, RRF score, JSON parsing. |
 | `constants/` | `BM25_K1`, `BM25_B`, `SEARCH_LIMIT`. |
 | `server.py` | Placeholder for the gRPC server (empty). |
 | `test/` | pytest suite (see below). |

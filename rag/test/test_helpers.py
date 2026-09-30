@@ -3,7 +3,13 @@ import json
 import numpy as np
 import pytest
 
-from helpers.helpers import base_chunk, cosine_similarity, parse_json, semantic_chunk
+from helpers.helpers import (
+    base_chunk,
+    cosine_similarity,
+    parse_json,
+    semantic_chunk,
+    tokenize,
+)
 
 
 class TestCosineSimilarity:
@@ -56,3 +62,33 @@ class TestParseJson:
     )
     def test_strips_code_fences(self, reply):
         assert parse_json(reply) == {"status": "found"}
+
+
+class TestBaseChunk:
+    @pytest.mark.parametrize(
+        ("size", "overlap", "expected"),
+        [
+            (4, 0, ["a b c d", "e f g"]),
+            (4, 1, ["a b c d", "d e f g"]),
+            (3, 1, ["a b c", "c d e", "e f g"]),
+            (10, 2, ["a b c d e f g"]),
+        ],
+    )
+    def test_windows(self, size, overlap, expected):
+        assert base_chunk(list("abcdefg"), size, overlap) == expected
+
+    def test_empty_input_has_no_chunks(self):
+        assert base_chunk([], 4, 1) == []
+
+
+class TestTokenize:
+    def test_lowercases_and_drops_stopwords(self):
+        assert tokenize("The Cat sat on THE mat") == ["cat", "sat", "mat"]
+
+    # R31 regression: punctuation tokens made every document with a "?" or "." match
+    def test_drops_punctuation(self):
+        assert tokenize("What made me anxious? Nothing.") == [
+            "made",
+            "anxious",
+            "nothing",
+        ]

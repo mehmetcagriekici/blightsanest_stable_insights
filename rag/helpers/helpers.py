@@ -24,7 +24,9 @@ def parse_json(data):
 # helper function to tokenize a string
 def tokenize(text: str) -> list[str]:
     tokens = [w.lower() for w in word_tokenize(text)]
-    return [w for w in tokens if w not in stop_words]
+    # drop tokens with no letters or digits: word_tokenize keeps punctuation
+    # ("?", "...", "``") as tokens, which would match almost every document
+    return [w for w in tokens if w not in stop_words and any(c.isalnum() for c in w)]
 
 
 # helper function to calculate cosine similarity
