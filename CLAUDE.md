@@ -65,7 +65,7 @@ Users store private data across any domain (health, finance, fitness, productivi
 
 Version 1 is completely private. Community features belong to Version 2.
 
-**Status**: `BlightSanest_Progress_Roadmap.md` is the authoritative source for implementation status, and `CODE_ISSUES.md` tracks open problems. Snapshot: RAG service in progress (core pipeline works; queries only load pre-built snapshots; gRPC server not started); database schema partial (users/documents, no pgvector); Go API scaffolding only; gRPC, PubSub, and infra/CI/CD not started.
+**Status**: `BlightSanest_Progress_Roadmap.md` is the authoritative source for implementation status, and `CODE_ISSUES.md` tracks open problems. Snapshot: RAG service in progress (core pipeline works; queries only load pre-built snapshots; gRPC server not started); database schema partial (users/documents; pgvector deferred to v2, embeddings stay in the per-user S3 snapshot); Go API scaffolding only; gRPC, PubSub, and infra/CI/CD not started.
 
 ---
 
@@ -81,10 +81,9 @@ The system consists of four components:
         ┌──────────┘   │   └──────────┐
         ▼              ▼              ▼
 ┌───────────────┐ ┌────────────┐ ┌─────────────┐
-│ Aurora +      │ │ RAG        │ │ PubSub (Go) │
-│ pgvector      │ │ (Python)   │ │             │
-└──────▲────────┘ └────┬───────┘ └─────────────┘
-       └── read-only ──┘
+│ Aurora        │ │ RAG        │ │ PubSub (Go) │
+│ PostgreSQL    │ │ (Python)   │ │             │
+└───────────────┘ └────────────┘ └─────────────┘
 ```
 
 The API is always the central orchestrator. Do not introduce new communication paths.
@@ -96,7 +95,7 @@ Current and planned communication paths:
 - API ↔ Database: SQL / ORM
 - API ↔ RAG: gRPC (**planned, not yet implemented**)
 - API ↔ PubSub: gRPC (**planned, not yet implemented**)
-- RAG ↔ Database: read-only SQL / pgvector
+- RAG ↔ Database: none in v1. In v2 RAG may read the shared index, but never writes.
 - PubSub ↔ RAG: deliberately no communication
 
 ---
@@ -105,7 +104,7 @@ Current and planned communication paths:
 
 ## Privacy
 
-Version 1 is privacy-first.
+Version 1 is privacy-first. These rules apply to v1.
 
 Never introduce:
 
@@ -115,6 +114,8 @@ Never introduce:
 - shared user data
 
 Each user owns completely isolated indexes.
+
+A shared index is a v2 feature and requires explicit consent and anonymization. RAG may read it, but never writes.
 
 ---
 
@@ -157,7 +158,9 @@ Never rely on positional indexes.
 
 ## Database
 
-The RAG service is read-only. All writes happen through the API.
+In v1, RAG has no database access. In v2 it may read the shared index, but never writes.
+
+All database writes happen through the API.
 
 Never bypass this separation.
 
@@ -166,21 +169,31 @@ Never bypass this separation.
 # Repository Layout
 
 ```
-proto/                # gRPC contracts (source of truth)
+proto/                # gRPC contracts, source of truth (planned, not created yet)
 rag/                  # Python RAG service
     inverted_index/
     semantic_index/
     search/
-    rag/
+    rag/              # RAG class (rag/rag/rag.py)
     storage/
     config/
     llm/
     custom_types/
+    constants/
+    helpers/
+    type_converter/
     test/
+    server.py
 models/               # SQLAlchemy models
 migrations/           # Alembic
+    alembic/
 api/                  # Go API
-pubsub/               # Go PubSub
+    cmd/api/
+    internal/
+        config/
+        domain/
+    go.mod
+pubsub/               # Go PubSub (planned, not created yet)
 docker-compose.yml
 pyproject.toml        # uv workspace root (members: rag, migrations)
 uv.lock               # single lock file for all Python members
@@ -208,7 +221,7 @@ rag/gen/
 
 Generated files are committed. Never edit generated code manually.
 
-Regenerate using:
+Regenerate using (once the Makefile exists):
 
 ```bash
 make proto
@@ -243,11 +256,13 @@ Python projects form a uv workspace: the root `pyproject.toml` lists `rag` and `
 
 Run `uv sync` from the repo root only. Inside a member folder it syncs just that member and uninstalls the other members' packages. `uv run` is safe anywhere.
 
-Run before committing:
+Run before committing, from `rag/`. There is no ruff config, so ruff takes its project root from the nearest `pyproject.toml`; run from the repo root, it misreads `rag/`'s first-party imports (I001) and also checks `migrations/` and `models/`:
 
 ```bash
+cd rag
 uv run ruff check .
 uv run ruff format --check .
+uv run pytest
 ```
 
 ---
@@ -256,7 +271,7 @@ uv run ruff format --check .
 
 Requirements
 
-- Go 1.23+
+- Go 1.26+
 - Constructor injection
 - Explicit dependency wiring
 - No globals
@@ -300,11 +315,13 @@ Never log:
 - embeddings
 - query text at info level
 
-Run before committing:
+Run before committing, from `api/`:
 
 ```bash
+cd api
 gofmt -l .
 golangci-lint run
+go test ./...
 ```
 
 ---
@@ -313,7 +330,7 @@ golangci-lint run
 
 Schema changes require Alembic migrations. Never modify the schema without a migration.
 
-RAG remains read-only.
+In v1, RAG has no database access; see Hard Constraints → Database.
 
 ---
 
@@ -372,7 +389,7 @@ docker-compose up -d postgres redis ollama
 ## Protobuf (after gRPC lands)
 
 ```bash
-make proto
+make proto                 # once the Makefile exists
 ```
 
 ---
@@ -384,7 +401,7 @@ A change is complete only when:
 - The four-component architecture is preserved.
 - Per-user isolation remains intact.
 - S3 remains the source of truth.
-- RAG remains read-only.
+- RAG has no database access (v1): no database driver, connection, or SQL in `rag/`.
 - No runtime indexing was introduced.
 - Appropriate tests exist or are updated.
 - Lint and build pass.

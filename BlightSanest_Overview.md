@@ -78,17 +78,17 @@ The system is built around **four interdependent legs** with the **API at the ce
           │                      │                  │
     ┌─────▼──────┐        ┌─────▼──────┐    ┌─────▼──────┐
     │  Database  │        │   RAG      │    │  PubSub    │
-    │ (Aurora +  │        │ (Python)   │    │   (Go)     │
-    │ pgvector)  │        │            │    │            │
+    │  (Aurora   │        │ (Python)   │    │   (Go)     │
+    │ PostgreSQL)│        │            │    │            │
     └────────────┘        └────────────┘    └────────────┘
 ```
 
 | Component | Language | Responsibility |
 |-----------|----------|-----------------|
 | **API** | Go | Central orchestrator. Routes requests to RAG, PubSub, and Database. Houses domain service modules. Handles auth, rate limiting, ingestion. |
-| **RAG** | Python | Domain-agnostic retrieval and generation. Builds indexes, performs hybrid search, generates LLM responses. Indexes currently live in S3/Redis; read-only pgvector access to the Database is planned. |
+| **RAG** | Python | Domain-agnostic retrieval and generation. Builds indexes, performs hybrid search, generates LLM responses. Indexes, including chunk embeddings, live in the per-user S3 snapshot, with Redis as a cache. No database access in v1 (see §7.4). |
 | **PubSub** | Go | Opt-in real-time data sharing. Decoupled from RAG. Enables community data exchange layer (v2). |
-| **Database** | PostgreSQL (Aurora) | Persistent relational data (users, documents). Vector embeddings via pgvector are planned. |
+| **Database** | PostgreSQL (Aurora) | Persistent relational data (users, documents). No vectors in v1; pgvector is deferred to v2 (see §7.4). |
 
 ### 4.2 Communication Boundaries
 
@@ -97,8 +97,8 @@ Clear separation of concerns:
 | Path | Protocol | Data Flow |
 |------|----------|-----------|
 | **API ↔ Database** | SQL/ORM | Business data, user records, domain data |
-| **API ↔ RAG** | gRPC | Query-time only: API sends query + user context to RAG, receives structured response |
-| **RAG ↔ Database** | SQL | Read-only index retrieval: vectors, embeddings, metadata |
+| **API ↔ RAG** | gRPC | Ingestion and queries: API sends documents to index, or a query + user context, and receives a structured response. All user data RAG uses comes through the API; its own index snapshots live in S3/Redis. |
+| **RAG ↔ Database** | None (v1) | No database access in v1. In v2 RAG may read the shared index, but never writes (see §7.4). |
 | **API ↔ PubSub** | gRPC | When user triggers shared data exchange |
 | **PubSub ↔ RAG** | None | Deliberately decoupled; do not communicate directly |
 
@@ -140,7 +140,7 @@ This approach:
 
 | Component | AWS Service | Purpose |
 |-----------|------------|---------|
-| **Relational Data (+ Vectors, planned)** | Amazon Aurora PostgreSQL (Serverless v2) + pgvector extension (planned) | User accounts and document records today; vector embeddings once pgvector lands. |
+| **Relational Data** | Amazon Aurora PostgreSQL (Serverless v2) | User accounts and document records. No vectors in v1; pgvector is deferred to v2 (see §7.4). |
 | **Large Indexes & Embeddings** | AWS S3 | Source of truth for BM25 structures, chunk embeddings, term frequencies, document mappings. |
 | **Hot Index Cache** | AWS ElastiCache (Redis) | In-memory cache for active users' indexes. TTL-based expiration. Optional (S3 fallback). |
 
@@ -190,8 +190,7 @@ RAG Service (triggered silently)
     ├─ Chunk documents
     ├─ Generate embeddings (Sentence Transformers)
     ├─ Build BM25 index
-    ├─ Save structures to S3
-    └─ Populate pgvector in Aurora (planned)
+    └─ Save structures to S3
     ↓
 Update Redis cache (active user's indexes)
     ↓
@@ -252,30 +251,24 @@ Return structured list of results
 
 ### 7.1 S3 Layout (Source of Truth)
 
-Target layout, with all data under a per-user directory structure:
+All data lives under a per-user prefix:
 
 ```
-s3://blightsanest-bucket/
+s3://{bucket}/
 └── users/
     └── {user_id}/
-        ├── documents/              # Original document files
-        │   ├── doc_1.pdf
-        │   └── doc_2.txt
-        ├── inverted_index/         # BM25 structures
-        │   └── index.msgpack
-        ├── docmap/                 # Document ID mappings
-        │   └── docmap.msgpack
-        ├── term_frequencies/       # Term statistics
-        │   └── tf.msgpack
-        ├── doc_lengths/            # Document lengths
-        │   └── lengths.msgpack
-        ├── chunk_embeddings/       # Numpy arrays (binary)
-        │   └── embeddings.npy
-        └── chunk_metadata/         # Chunk info (JSON)
-            └── metadata.json
+        ├── manifest                # names the live snapshot
+        └── snapshots/
+            └── {version}/
+                ├── docmap
+                ├── inverted_index
+                ├── term_frequencies
+                ├── doc_lengths
+                ├── chunk_embeddings
+                └── chunk_metadata
 ```
 
-**Current implementation**: each user's index is a versioned snapshot of MessagePack objects under `{bucket}/users/{user_id}/snapshots/{version}/` (`docmap`, `inverted_index`, `term_frequencies`, `doc_lengths`, `chunk_embeddings`, `chunk_metadata`), plus `{bucket}/users/{user_id}/manifest`, which names the live snapshot and is written last so readers never see a partial save. Per-type folders and original document files are not implemented yet. The bucket and region come from the RAG service's config (`S3_BUCKET`, `AWS_REGION`). No AWS keys are stored: the S3 client uses boto3's default credential chain, which on EKS is the pod's IAM role.
+Each user's index is a versioned snapshot. The parts are `SNAPSHOT_PARTS` in `rag/search/hybrid_search.py`, and each one is a single MessagePack object with no file extension. `save()` writes every part under a new `{version}`, then writes `manifest` last, so readers never see a partial save. Original document files are not stored in S3 yet. The bucket and region come from the RAG service's config (`S3_BUCKET`, `AWS_REGION`). No AWS keys are stored: the S3 client uses boto3's default credential chain, which on EKS is the pod's IAM role.
 
 **Key principle**: S3 is the **authoritative store**. All indexes persist here. Local/Redis copies are disposable.
 
@@ -311,7 +304,41 @@ ALTER TABLE documents
     ADD COLUMN filename VARCHAR(255),
     ADD COLUMN content_type VARCHAR(255),
     ADD COLUMN size_bytes BIGINT;
+```
 
+Vector embeddings are not stored in the database in v1 (see §7.4).
+
+### 7.3 Redis Cache (Hot Layer)
+
+Active users' snapshot parts cached in Redis with TTL, under the same keys as S3:
+
+```
+Key Pattern: users/{user_id}/snapshots/{version}/{part}
+
+Examples:
+  - users/user_123/snapshots/{version}/inverted_index     → BM25 structures (TTL: 1 hour)
+  - users/user_123/snapshots/{version}/chunk_embeddings   → Embeddings array (TTL: 1 hour)
+  - users/user_123/snapshots/{version}/chunk_metadata     → Metadata (TTL: 1 hour)
+```
+
+Snapshot parts never change once written, so caching them is always safe. The manifest (`users/{user_id}/manifest`) is the one mutable key and is never cached: `HybridSearch` reads and writes it with `cache=False`, so it always comes from S3.
+
+**Behavior**:
+- ✅ Cache hit → Serve from Redis (milliseconds)
+- ❌ Cache miss → Load from S3, serve (seconds). Writing back to Redis on a miss is planned; today Redis is only populated on upload.
+- ❌ Redis down → Load from S3, skip cache (non-fatal)
+
+### 7.4 Deferred to v2: pgvector and RAG Database Access
+
+**v1**: chunk embeddings stay in each user's S3 snapshot, and RAG has no database access. Everything RAG needs comes through the API, S3, and Redis.
+
+**v2**: RAG may read the shared index, but never writes.
+
+**Why**: v2 may need a shared, consented, anonymized index that RAG searches but no user can read directly, and that index would be too large to load per request.
+
+Draft `embeddings` table from v1 planning, kept for reference only. It has not been revisited for the v2 shared-index design:
+
+```sql
 -- Vector embeddings (via pgvector extension)
 CREATE TABLE embeddings (
     id UUID PRIMARY KEY,
@@ -322,24 +349,6 @@ CREATE TABLE embeddings (
     created_at TIMESTAMP
 );
 ```
-
-### 7.3 Redis Cache (Hot Layer)
-
-Active users' indexes cached in Redis with TTL:
-
-```
-Key Pattern: users/{user_id}/{index_type}
-
-Examples:
-  - users/user_123/inverted_index       → BM25 structures (TTL: 1 hour)
-  - users/user_123/chunk_embeddings     → Embeddings array (TTL: 1 hour)
-  - users/user_123/chunk_metadata       → Metadata (TTL: 1 hour)
-```
-
-**Behavior**:
-- ✅ Cache hit → Serve from Redis (milliseconds)
-- ❌ Cache miss → Load from S3, serve (seconds). Writing back to Redis on a miss is planned; today Redis is only populated on upload.
-- ❌ Redis down → Load from S3, skip cache (non-fatal)
 
 ---
 
@@ -489,7 +498,7 @@ AWS Infrastructure:
 | Phase | Status | Focus | Est. Duration |
 |-------|--------|-------|---------------|
 | 1 | 🟡 **In Progress** | RAG service, indexing, storage layer (target layout and credentials done), Bedrock provider (untested); build-vs-load redesign next | — |
-| 2 | 🟡 **Partial** | Database: users/documents schema done, pgvector pending | — |
+| 2 | 🟡 **Partial** | Database: users/documents schema done; pgvector deferred to v2 | — |
 | 3 | 🟡 **Started** | Go API service: server, config, logger scaffolding; no endpoints yet | 3-4 weeks |
 | 4 | ⏳ **Planned** | gRPC integration between API & RAG | 2-3 weeks |
 | 5 | ⏳ **Planned** | PubSub service, real-time sharing | 3-4 weeks |

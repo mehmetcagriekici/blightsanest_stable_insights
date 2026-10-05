@@ -1,7 +1,7 @@
 # BlightSanest: Progress & Roadmap
 
 **Current Status**: Phase 1 (RAG Service) finishing — Phase 3 (Go API) scaffolding started in parallel  
-**Last Updated**: September 2026
+**Last Updated**: October 2026
 
 ---
 
@@ -10,7 +10,7 @@
 | Metric | Status | Notes |
 |--------|--------|-------|
 | **Phase 1: RAG Service** | 🟡 In Progress | Indexing, hybrid search, storage, RAG class, Ollama + Bedrock providers implemented; storage layout and credentials aligned with the target design; queries only load pre-built, versioned snapshots; 141 tests. Open: real Bedrock test, gRPC server. See `CODE_ISSUES.md`. |
-| **Phase 2: Database** | 🟡 Partial | `users` and `documents` tables, SQLAlchemy models, first Alembic migration done. pgvector / `embeddings` table not started. |
+| **Phase 2: Database** | 🟡 Partial | `users` and `documents` tables, SQLAlchemy models, first Alembic migration done. pgvector / `embeddings` table deferred to v2 (§8.4). |
 | **Phase 3: API Service** | 🟡 Started | Go HTTP server with graceful shutdown, typed env config, slog logger (not yet wired in), domain types. No routes, handlers, services, or repositories yet. |
 | **Phase 4: gRPC Integration** | ⏳ Not Started | No `proto/` directory yet. |
 | **Phase 5: PubSub Service** | ⏳ Not Started | No `pubsub/` directory yet. |
@@ -157,11 +157,8 @@ Phase 1 is **COMPLETE** when:
 
 ### 3.2 Remaining ⏳
 
-- ⏳ pgvector extension (the `postgres:15-alpine` image does not include it; needs a pgvector image and a migration)
-- ⏳ `embeddings` table (document_id, chunk_id, `vector(384)`, JSONB metadata)
 - ⏳ `documents` metadata columns (filename, content_type, size_bytes)
 - ⏳ Database-level `ON DELETE CASCADE` on `documents.user_id` (current FK has no ON DELETE clause)
-- ⏳ RAG read-only SQL access (no SQL code in `rag/` yet)
 - ⏳ Aurora Serverless v2 provisioning (only the local container exists)
 
 ---
@@ -370,6 +367,14 @@ Move from personal-only (v1) to opt-in community sharing (v2).
 - No community features in v1
 - All v1 data is private
 
+### 8.4 Deferred from v1
+
+Decided October 2026 (see §10.1). In v1, embeddings stay in the per-user S3 snapshot and RAG has no database access. In v2, RAG may read the shared index, but never writes.
+
+- ⏳ pgvector extension (the `postgres:15-alpine` image does not include it; needs a pgvector image and a migration)
+- ⏳ `embeddings` table (document_id, chunk_id, `vector(384)`, JSONB metadata); draft from v1 planning, to be revisited for the shared index
+- ⏳ RAG read-only SQL access to the shared index
+
 ---
 
 ## 9. Overall Roadmap Timeline
@@ -381,7 +386,7 @@ Original plan dates are kept for reference; phases 1 and 2 have run past their p
 | Phase | Planned Duration | Planned Window | Status |
 |-------|------------------|----------------|--------|
 | Phase 1: RAG | 4 weeks | Apr – Jun 2026 | 🟡 In progress |
-| Phase 2: Database | 1 week | May 2026 | 🟡 Partial (pgvector pending) |
+| Phase 2: Database | 1 week | May 2026 | 🟡 Partial (pgvector deferred to v2) |
 | Phase 3: API | 3-4 weeks | Jun – Jul 2026 | 🟡 Started (Jul 2026) |
 | Phase 4: gRPC | 2-3 weeks | Jul – Aug 2026 | ⏳ Not started |
 | Phase 5: PubSub | 3-4 weeks | Aug – Sep 2026 | ⏳ Not started |
@@ -401,9 +406,13 @@ Phase 2 (DB)  ──┼─→ Phase 3 (API) → Phase 4 (gRPC) → Phase 5 (PubS
 
 ## 10. Current Blockers & Next Actions
 
-### 10.1 Open Decisions
+### 10.1 Decisions
 
-1. **pgvector**: implement the `embeddings` table and RAG read path, or keep embeddings in S3/Redis only for v1
+No open decisions.
+
+Closed:
+
+1. ✅ **pgvector** (October 2026): deferred to v2. In v1, embeddings stay in the per-user S3 snapshot and RAG has no database access; everything RAG needs comes through the API, S3, and Redis. Reason: v2 may need a shared, consented, anonymized index that RAG searches but no user can read directly, and that index would be too large to load per request. See §8.4.
 
 ### 10.2 Phase 1 Next Actions
 
@@ -507,7 +516,7 @@ Not yet present: `proto/`, `pubsub/`, `rag/gen/`, `api/internal/gen/`, Dockerfil
 ## 14. Summary
 
 - **Phase 1 (RAG)**: core complete; Bedrock tests, storage alignment, query-path index building, and unit tests remain
-- **Phase 2 (Database)**: users/documents schema done; pgvector pending
+- **Phase 2 (Database)**: users/documents schema done; pgvector deferred to v2
 - **Phase 3 (API)**: server/config/logger scaffolding in place; no endpoints yet
 - **Phases 4-6**: not started
 - **v1 target**: October 2026 originally; needs re-planning
@@ -515,6 +524,6 @@ Not yet present: `proto/`, `pubsub/`, `rag/gen/`, `api/internal/gen/`, Dockerfil
 ---
 
 **Version**: 1.1  
-**Last Updated**: September 2026  
+**Last Updated**: October 2026  
 **Owner**: Call (Developer)  
 **Status**: Active Development
