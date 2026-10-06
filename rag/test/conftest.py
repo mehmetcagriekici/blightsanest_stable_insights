@@ -1,16 +1,19 @@
-import os
-
-# semantic_index loads its model at import time from this variable, so it
-# must be set before any test module imports it; an exported value wins
-os.environ.setdefault("SENTENCE_TRANSFORMERS_MODEL_NAME", "all-MiniLM-L6-v2")
-
 import boto3
 import pytest
 from moto import mock_aws
 from redis.exceptions import ConnectionError as RedisConnectionError
 
+from config.config import Config
 from custom_types.custom_types import Document, User
+from semantic_index.semantic_index import create_embedding_model
 from storage.storage import Storage
+
+
+# the real embedding model (Config's default), loaded once for the whole
+# run, as the service loads it once at startup
+@pytest.fixture(scope="session")
+def embedding_model():
+    return create_embedding_model(Config(bucket_name="test_bucket"))
 
 
 @pytest.fixture

@@ -1,13 +1,8 @@
 import asyncio
 import logging
-import os
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
-
-region_name = os.getenv("AWS_REGION_NAME")
-# model id is the model-agnostic knob: any Converse-compatible model works
-model_id = os.getenv("BEDROCK_MODEL_ID")
 
 logger = logging.getLogger(__name__)
 
@@ -15,11 +10,18 @@ logger = logging.getLogger(__name__)
 # production / containerized
 # async function to get an llm response from aws bedrock via the converse api
 # (the converse api is model-agnostic - same request/response shape for any model)
-async def llm_bedrock(user_content: str, system_content: str) -> str | None:
+#
+# region and model_id come from Config (region, bedrock_model_id). bind them
+# once at startup so RAG gets the plain (user, system) signature:
+#     functools.partial(llm_bedrock, region=..., model_id=...)
+# model_id is the model-agnostic knob: any Converse-compatible model works
+async def llm_bedrock(
+    user_content: str, system_content: str, *, region: str, model_id: str
+) -> str | None:
     try:
         # client creation raises NoRegionError (a BotoCoreError) when no region
         # is configured, so it belongs inside the try as well
-        client = boto3.client("bedrock-runtime", region_name=region_name)
+        client = boto3.client("bedrock-runtime", region_name=region)
         # boto3 is synchronous, so run the call in a thread to avoid blocking
         # the event loop. the system prompt is a top-level parameter, not a
         # message role (converse messages only allow user/assistant)

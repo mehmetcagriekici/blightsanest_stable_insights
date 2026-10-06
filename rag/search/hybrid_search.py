@@ -37,9 +37,12 @@ def _part_key(version: str, part: str) -> str:
 # blightsanest main search engine: the BM25 and semantic indexes of one user,
 # sharing one docmap, saved and loaded together as one versioned snapshot.
 #
-# query path:     HybridSearch.load(storage), then search. never builds.
-# ingestion path: HybridSearch.load_or_empty(storage), then build() and/or
-#                 remove_documents(), then save().
+# query path:     HybridSearch.load(storage, model), then search. never builds.
+# ingestion path: HybridSearch.load_or_empty(storage, model), then build()
+#                 and/or remove_documents(), then save().
+#
+# model is the embedding model from create_embedding_model(), loaded once at
+# startup and shared by every user's HybridSearch.
 #
 # save() writes every part under a new snapshots/{version}/ prefix and then
 # switches the manifest to it, so a reader sees either the old snapshot or
@@ -47,19 +50,21 @@ def _part_key(version: str, part: str) -> str:
 # redis is always safe. saves for one user must not run concurrently: the
 # last manifest write wins and the other save's changes are lost.
 class HybridSearch:
-    def __init__(self, storage: Storage) -> None:
+    def __init__(self, storage: Storage, embedding_model: Any) -> None:
         self.storage = storage
         # the one docmap both indexes read and update
         self.docmap: dict[str, Document] = {}
         self.inverted_index = InvertedIndex(self.docmap)
-        self.semantic_index = SemanticIndex(self.docmap)
+        self.semantic_index = SemanticIndex(
+            self.docmap, embedding_model=embedding_model
+        )
         # the loaded or last saved manifest; None until one exists
         self.manifest: dict[str, Any] | None = None
 
     # query path: load the saved snapshot, never build one
     @classmethod
-    def load(cls, storage: Storage) -> Self:
-        search = cls.load_or_empty(storage)
+    def load(cls, storage: Storage, embedding_model: Any) -> Self:
+        search = cls.load_or_empty(storage, embedding_model)
         if search.manifest is None:
             raise IndexNotBuiltError(
                 f"no index has been built for user {storage.database_user.id}"
@@ -69,8 +74,8 @@ class HybridSearch:
     # ingestion path: the saved snapshot to update, or an empty index for a
     # user who has none yet
     @classmethod
-    def load_or_empty(cls, storage: Storage) -> Self:
-        search = cls(storage)
+    def load_or_empty(cls, storage: Storage, embedding_model: Any) -> Self:
+        search = cls(storage, embedding_model)
         manifest = storage.load_data(MANIFEST, cache=False)
         if manifest is None:
             return search

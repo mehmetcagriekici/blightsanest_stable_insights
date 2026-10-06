@@ -1,6 +1,6 @@
 # BlightSanest: Known Code Issues
 
-**Last Updated**: October 5, 2026
+**Last Updated**: October 6, 2026
 **Scope**: `api/` (Go), `rag/` (Python), `models/` + `migrations/`
 
 The main tables track serious problems:
@@ -22,7 +22,6 @@ No open serious issues.
 | # | Location | Issue | Impact |
 |---|----------|-------|--------|
 | R35 | `rag/helpers/helpers.py:96-106` | Chunks are 4 sentences, but all-MiniLM-L6-v2 only reads the first 256 word pieces. Line breaks now also split sentences, so unpunctuated line-based entries are chunked. | Partial: a single long sentence can still be truncated. Token-aware chunking is deferred because it changes every stored index. |
-| R44 | `rag/semantic_index/semantic_index.py:11` | The model is loaded at import time from `SENTENCE_TRANSFORMERS_MODEL_NAME`, with no check. `SentenceTransformer(None)` doesn't fail cleanly. | If the variable is unset, importing `semantic_index` (and anything that imports `search`) crashes with `AttributeError: 'NoneType' object has no attribute 'parameters'`, which doesn't name the missing variable. The env read also bypasses `rag/config/`. |
 | R43 | `rag/type_converter/type_converter.py:74-83` | Embeddings are stored as `tolist()` Python floats in msgpack. | Several times larger and slower than storing `arr.tobytes()`. Deferred: no measured need yet. |
 | R45 | `rag/custom_types/db_types.py`, `rag/storage/storage.py:26,32,46`, `rag/search/hybrid_search.py:65` | Leftovers from the plan for RAG to read the database, now deferred to v2. `DbUser` and `DbDocument` are never used, and `DbUser` copies the `users` row, including `hashed_password`, into the RAG codebase. `Storage.database_user` holds a plain `User` (just `id`) but is named as if it were a database row. | No runtime effect. The models suggest RAG reads the database, which v1 forbids, and put a password-hash field in a service that should never see one. The field name misleads readers. |
 

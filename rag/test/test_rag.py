@@ -50,7 +50,7 @@ class TestRagEnd2End:
 
     @pytest.mark.asyncio
     async def test_full_pipeline(
-        self, config, redis_connection, e2e_user, mock_documents
+        self, config, redis_connection, e2e_user, mock_documents, embedding_model
     ):
         """
         Full e2e flow:
@@ -72,10 +72,10 @@ class TestRagEnd2End:
 
             # --- PHASE 1: The query path never builds ---
             with pytest.raises(IndexNotBuiltError):
-                HybridSearch.load(storage)
+                HybridSearch.load(storage, embedding_model)
 
             # --- PHASE 2: Ingestion builds and saves ---
-            search = HybridSearch.load_or_empty(storage)
+            search = HybridSearch.load_or_empty(storage, embedding_model)
             search.build(mock_documents)
             search.save()
 
@@ -95,7 +95,7 @@ class TestRagEnd2End:
             storage_reloaded = Storage(
                 e2e_user, config.bucket_name, s3, redis_connection
             )
-            search_reloaded = HybridSearch.load(storage_reloaded)
+            search_reloaded = HybridSearch.load(storage_reloaded, embedding_model)
 
             # Verify indexes loaded from storage
             assert search_reloaded.manifest == search.manifest

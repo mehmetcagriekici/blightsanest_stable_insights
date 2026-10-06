@@ -8,11 +8,22 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from config.config import Config, load_config
 from storage.clients import create_redis_client, create_s3_client
 
+# every variable load_config() reads that has a default (or may be unset)
+OPTIONAL_VARS = (
+    "AWS_REGION",
+    "REDIS_HOST",
+    "REDIS_PORT",
+    "SENTENCE_TRANSFORMERS_MODEL_NAME",
+    "OLLAMA_HOST",
+    "OLLAMA_MODEL",
+    "BEDROCK_MODEL_ID",
+)
+
 
 class TestLoadConfig:
     def test_defaults(self, monkeypatch):
         monkeypatch.setenv("S3_BUCKET", "my-bucket")
-        for name in ("AWS_REGION", "REDIS_HOST", "REDIS_PORT"):
+        for name in OPTIONAL_VARS:
             monkeypatch.delenv(name, raising=False)
 
         assert load_config() == Config(
@@ -20,6 +31,10 @@ class TestLoadConfig:
             region="us-east-1",
             redis_host="localhost",
             redis_port=6379,
+            embedding_model_name="all-MiniLM-L6-v2",
+            ollama_host="http://localhost:11434",
+            ollama_model="gemma3",
+            bedrock_model_id="anthropic.claude-opus-5-5",
         )
 
     def test_reads_environment(self, monkeypatch):
@@ -27,12 +42,20 @@ class TestLoadConfig:
         monkeypatch.setenv("AWS_REGION", "eu-central-1")
         monkeypatch.setenv("REDIS_HOST", "redis")
         monkeypatch.setenv("REDIS_PORT", "6380")
+        monkeypatch.setenv("SENTENCE_TRANSFORMERS_MODEL_NAME", "other-model")
+        monkeypatch.setenv("OLLAMA_HOST", "http://ollama:11434")
+        monkeypatch.setenv("OLLAMA_MODEL", "llama3")
+        monkeypatch.setenv("BEDROCK_MODEL_ID", "anthropic.claude-sonnet-5-5")
 
         assert load_config() == Config(
             bucket_name="my-bucket",
             region="eu-central-1",
             redis_host="redis",
             redis_port=6380,
+            embedding_model_name="other-model",
+            ollama_host="http://ollama:11434",
+            ollama_model="llama3",
+            bedrock_model_id="anthropic.claude-sonnet-5-5",
         )
 
     @pytest.mark.parametrize(

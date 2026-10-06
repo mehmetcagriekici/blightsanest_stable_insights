@@ -148,9 +148,9 @@ This approach:
 
 | Component | Technology | Environment |
 |-----------|-----------|-------------|
-| **Embeddings** | Sentence Transformers (model set by `SENTENCE_TRANSFORMERS_MODEL_NAME`, e.g. all-MiniLM-L6-v2) | Local dev & production (runs locally or containerized). Loaded once per process. |
-| **LLM (Development)** | Ollama (`llm_ollama`, default model `gemma3`) | Local development via Docker. |
-| **LLM (Production)** | AWS Bedrock (`llm_bedrock`, Converse API, model set by `BEDROCK_MODEL_ID`) | Managed LLM service; replaces Ollama in production. Implemented, not yet tested. |
+| **Embeddings** | Sentence Transformers (model set by `SENTENCE_TRANSFORMERS_MODEL_NAME`, default all-MiniLM-L6-v2) | Local dev & production (runs locally or containerized). Loaded once per process. |
+| **LLM (Development)** | Ollama (`llm_ollama`, model set by `OLLAMA_MODEL`, default `gemma3`) | Local development via Docker. |
+| **LLM (Production)** | AWS Bedrock (`llm_bedrock`, Converse API, model set by `BEDROCK_MODEL_ID`, default `anthropic.claude-opus-5-5`) | Managed LLM service; replaces Ollama in production. Implemented, not yet tested. |
 | **Search Algorithm** | Hybrid Search + RRF | Combines BM25 (lexical) and semantic (embedding-based) search via Reciprocal Rank Fusion. |
 
 ### 5.4 Security & Access

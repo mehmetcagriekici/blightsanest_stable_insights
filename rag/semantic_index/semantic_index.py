@@ -1,14 +1,19 @@
-import os
 from typing import Any
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
+from config.config import Config
 from constants.constants import SEARCH_LIMIT
 from custom_types.custom_types import Document
 from helpers.helpers import cosine_similarity, semantic_chunk
 
-model = SentenceTransformer(os.getenv("SENTENCE_TRANSFORMERS_MODEL_NAME"))
+
+# load the embedding model named in the config. loading is slow, so the
+# service calls this once at startup and passes the model to every
+# HybridSearch / SemanticIndex it creates
+def create_embedding_model(config: Config) -> SentenceTransformer:
+    return SentenceTransformer(config.embedding_model_name)
 
 
 # semantic indexing class with chunking
@@ -19,10 +24,12 @@ class SemanticIndex:
     def __init__(
         self,
         docmap: dict[str, Document] | None = None,
-        embedding_model: Any = None,
+        *,
+        embedding_model: Any,
     ) -> None:
-        # the process-wide model unless a caller (a test) injects one
-        self.model = model if embedding_model is None else embedding_model
+        # always injected: the shared model from create_embedding_model(),
+        # or a stub in tests. Any, because stubs only need encode()
+        self.model = embedding_model
         # HybridSearch passes the docmap it shares with the inverted index
         self.docmap: dict[str, Document] = {} if docmap is None else docmap
         # one row per chunk, aligned with chunk_metadata; None until the

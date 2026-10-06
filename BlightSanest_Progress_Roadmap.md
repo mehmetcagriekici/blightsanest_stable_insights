@@ -33,8 +33,8 @@
 - ✅ Dependency injection: the LLM provider is passed via the constructor; no provider selection inside `RAG`
 
 #### 2.1.2 LLM Providers (`rag/llm/`)
-- ✅ `llm_ollama` (`ollama_provider.py`) — async Ollama client, `OLLAMA_HOST` env (default `http://localhost:11434`), default model `gemma3`; catches only Ollama and HTTP errors
-- ✅ `llm_bedrock` — Bedrock Converse API (model-agnostic), `AWS_REGION_NAME` / `BEDROCK_MODEL_ID` env (no defaults; `BEDROCK_MODEL_ID` must be set), boto3 call run via `asyncio.to_thread`
+- ✅ `llm_ollama` (`ollama_provider.py`) — async Ollama client, host passed in from `Config.ollama_host` (`OLLAMA_HOST`, default `http://localhost:11434`) and model from `Config.ollama_model` (`OLLAMA_MODEL`, default `gemma3`); catches only Ollama and HTTP errors
+- ✅ `llm_bedrock` — Bedrock Converse API (model-agnostic), region and model id passed in from `Config.region` (`AWS_REGION`, shared with S3) and `Config.bedrock_model_id` (`BEDROCK_MODEL_ID`, default `anthropic.claude-opus-5-5`), boto3 call run via `asyncio.to_thread`
   - Uses the default AWS credential chain (IAM role compatible)
   - Returns `None` on client errors or malformed responses
   - ⚠️ Not covered by any test yet
@@ -47,7 +47,7 @@
 - ✅ Tokens with no letters or digits (punctuation) are dropped
 
 #### 2.1.4 Semantic Index (`rag/semantic_index/`)
-- ✅ Sentence Transformers model named by `SENTENCE_TRANSFORMERS_MODEL_NAME` (e.g. `all-MiniLM-L6-v2`, 384-dim), loaded once per process
+- ✅ Sentence Transformers model named by `Config.embedding_model_name` (`SENTENCE_TRANSFORMERS_MODEL_NAME`, default `all-MiniLM-L6-v2`, 384-dim), loaded once at startup by `create_embedding_model()` and injected through `HybridSearch` into `SemanticIndex`
 - ✅ Sentence-based chunking with sliding window (`semantic_chunk`: 4 sentences per chunk, 1 sentence overlap; sentences split on `.`, `!`, `?` and line breaks)
 - ✅ Chunk metadata: `document_id`, `chunk_index`, `total_chunks`
 - ✅ Chunks resolved back to documents via the stable `docmap` by `document_id` (no positional indexes)
@@ -70,7 +70,7 @@
   - `delete_data(name)`; `cache=False` bypasses Redis (used for the manifest)
   - Redis errors and unreadable cached values are logged and non-fatal; a failed Redis write drops the cached key
 - ✅ Keys are per-user under `users/{user_id}/` in both S3 and Redis, built by `Storage._key()`
-- ✅ No per-user AWS secrets: S3 and Redis clients are created once from `Config` (`rag/config/`, env `S3_BUCKET`, `AWS_REGION`, `REDIS_HOST`, `REDIS_PORT`) and passed into `Storage`; S3 uses boto3's default credential chain
+- ✅ No per-user AWS secrets: S3 and Redis clients are created once from `Config` (`rag/config/`, env `S3_BUCKET`, `AWS_REGION`, `REDIS_HOST`, `REDIS_PORT`; `load_config()` is the only env reader in `rag/`) and passed into `Storage`; S3 uses boto3's default credential chain
 - ⚠️ See §2.2.2 for remaining gaps
 
 #### 2.1.7 Type Conversion & Serialization (`rag/type_converter/`)
@@ -99,7 +99,7 @@
 ### 2.2 What Remains for Phase 1 ⏳
 
 #### 2.2.1 Bedrock Validation
-- ✅ Unit tests for `llm_bedrock` with mocked Converse responses (success, client error, malformed shape, missing region)
+- ✅ Unit tests for `llm_bedrock` with mocked Converse responses (success, client error, malformed shape)
 - ⏳ Integration test against real Bedrock (dev account)
 - ⏳ Benchmark Ollama vs Bedrock (quality, latency, cost)
 
