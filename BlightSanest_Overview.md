@@ -131,9 +131,9 @@ This approach:
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| **Backend / API** | Go | High-performance, concurrent service. Central orchestrator. |
+| **Backend / API** | Go 1.27 | High-performance, concurrent service. Central orchestrator. |
 | **RAG Service** | Python 3.12 | Machine learning, embeddings, search algorithms, LLM integration. |
-| **PubSub Service** | Go | Real-time messaging and event distribution. |
+| **PubSub Service** | Go 1.27 | Real-time messaging and event distribution. |
 | **Service Communication** | gRPC + Protocol Buffers (planned) | Type-safe, high-performance RPC between services. |
 
 ### 5.2 Data & Storage

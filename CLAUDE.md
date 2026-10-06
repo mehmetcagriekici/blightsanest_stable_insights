@@ -271,7 +271,7 @@ uv run pytest
 
 Requirements
 
-- Go 1.26+
+- Go 1.27+
 - Constructor injection
 - Explicit dependency wiring
 - No globals

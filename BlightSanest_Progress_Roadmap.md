@@ -171,7 +171,7 @@ The API is the central orchestrator. It receives user requests, validates them, 
 
 ### 4.2 What Exists ✅
 
-- ✅ Go module `github.com/mehmetcagriekici/blightsanest_stable_insights/api` (Go 1.26)
+- ✅ Go module `github.com/mehmetcagriekici/blightsanest_stable_insights/api` (Go 1.27)
 - ✅ `cmd/api/main.go` — signal-aware context (SIGINT/SIGTERM), config load, `run()` that handles both shutdown signals and server start failures
 - ✅ `cmd/api/server.go` — `http.Server` wrapper with `ServeMux` (no routes yet), `start()` / `kill()` with 5s graceful shutdown
 - ✅ `internal/config` — typed `Config` loaded once from env: `PORT` (8080), `CUSTOM_BUFFER_SIZE` (8192), `ENV` (`development`)
