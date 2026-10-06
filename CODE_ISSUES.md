@@ -23,7 +23,6 @@ No open serious issues.
 |---|----------|-------|--------|
 | R35 | `rag/helpers/helpers.py:96-106` | Chunks are 4 sentences, but all-MiniLM-L6-v2 only reads the first 256 word pieces. Line breaks now also split sentences, so unpunctuated line-based entries are chunked. | Partial: a single long sentence can still be truncated. Token-aware chunking is deferred because it changes every stored index. |
 | R43 | `rag/type_converter/type_converter.py:74-83` | Embeddings are stored as `tolist()` Python floats in msgpack. | Several times larger and slower than storing `arr.tobytes()`. Deferred: no measured need yet. |
-| R45 | `rag/custom_types/db_types.py`, `rag/storage/storage.py:26,32,46`, `rag/search/hybrid_search.py:65` | Leftovers from the plan for RAG to read the database, now deferred to v2. `DbUser` and `DbDocument` are never used, and `DbUser` copies the `users` row, including `hashed_password`, into the RAG codebase. `Storage.database_user` holds a plain `User` (just `id`) but is named as if it were a database row. | No runtime effect. The models suggest RAG reads the database, which v1 forbids, and put a password-hash field in a service that should never see one. The field name misleads readers. |
 
 ---
 
@@ -49,9 +48,9 @@ No open serious issues.
 | Area | Open |
 |------|------|
 | RAG (Python) | 0 |
-| RAG (Python), lower severity | 4 |
+| RAG (Python), lower severity | 2 |
 | API (Go) | 2 |
 | Database | 1 |
-| **Total** | **7** |
+| **Total** | **5** |
 
 Suggested order to address: A3, A2, D1, then section 1.1.

@@ -49,7 +49,7 @@ query ─▶ HybridSearch.load(storage, model) ─▶ BM25 + semantic ─▶ RRF
 | `storage/` | `Storage(user, bucket_name, s3_client, redis_connection)`: `upload_data(name, data)` writes to S3 then Redis (TTL 3600s); `load_data(name)` reads Redis first, falls back to S3; `delete_data(name)`. `cache=False` bypasses Redis. `load_data` returns `None` only when the object doesn't exist; any other S3 error raises. Redis errors and unreadable cached values are logged and never fatal, and a failed Redis write drops the cached key. `clients.py` creates the shared S3 and Redis clients once from `Config`. |
 | `type_converter/` | `TypeConverter`: MessagePack serialization with a type registry for set, tuple, Counter, OrderedDict, defaultdict, numpy arrays, and registered Pydantic models. Serializing an unregistered model, or deserializing an unknown type tag, raises `TypeError`. |
 | `config/` | `Config` (bucket, region, Redis host/port) and `load_config()`, which reads it once from environment variables. |
-| `custom_types/` | Pydantic models: `Document`, `User` (just `id`), `RagResponse` (`custom_types.py`); `DbUser`, `DbDocument` mirroring DB rows (`db_types.py`), currently unused (see R45 in `../CODE_ISSUES.md`). |
+| `custom_types/` | Pydantic models: `Document`, `User` (just `id`), `RagResponse` (`custom_types.py`). |
 | `helpers/` | Tokenizing (NLTK, lowercased, English stopwords and punctuation-only tokens dropped), cosine similarity, chunking, RRF score, JSON parsing. |
 | `constants/` | `BM25_K1`, `BM25_B`, `SEARCH_LIMIT`. |
 | `server.py` | Placeholder for the gRPC server (empty). |

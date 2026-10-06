@@ -34,7 +34,7 @@ class TestStorageInitialization:
 class TestKeys:
     @pytest.mark.parametrize("user_id", ["user1", "user2"])
     def test_key_uses_users_prefix(self, storage, user_id):
-        storage.database_user.id = user_id
+        storage.user.id = user_id
         assert storage._key("doc.pkl") == f"users/{user_id}/doc.pkl"
 
 

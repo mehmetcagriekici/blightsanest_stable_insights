@@ -3,7 +3,6 @@ from typing import Literal
 from pydantic import BaseModel
 
 
-# default document model before building the microservices
 class Document(BaseModel):
     id: str
     content: str
@@ -18,6 +17,5 @@ class RagResponse(BaseModel):
     response: str
 
 
-# default user for development
 class User(BaseModel):
     id: str

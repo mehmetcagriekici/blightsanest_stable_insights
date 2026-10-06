@@ -67,7 +67,7 @@ class HybridSearch:
         search = cls.load_or_empty(storage, embedding_model)
         if search.manifest is None:
             raise IndexNotBuiltError(
-                f"no index has been built for user {storage.database_user.id}"
+                f"no index has been built for user {storage.user.id}"
             )
         return search
 

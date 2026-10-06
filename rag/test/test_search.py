@@ -57,7 +57,7 @@ DOCUMENTS = [
 
 
 def s3_keys(storage) -> set[str]:
-    prefix = f"users/{storage.database_user.id}/"
+    prefix = f"users/{storage.user.id}/"
     listed = storage.s3_client.list_objects_v2(
         Bucket=storage.bucket_name, Prefix=prefix
     )
@@ -122,7 +122,7 @@ class TestSnapshot:
         self, s3_storage, embedding_model, fake_redis
     ):
         search = built(s3_storage, embedding_model)
-        user_prefix = f"users/{s3_storage.database_user.id}/"
+        user_prefix = f"users/{s3_storage.user.id}/"
         assert f"{user_prefix}{MANIFEST}" not in fake_redis.data
         version = search.manifest["version"]
         assert f"{user_prefix}snapshots/{version}/docmap" in fake_redis.data

@@ -23,13 +23,13 @@ class Storage:
     # and shared; Storage only scopes them to one user and one bucket
     def __init__(
         self,
-        database_user: User,
+        user: User,
         bucket_name: str,
         s3_client: BaseClient,
         redis_connection: redis.Redis,
         redis_ttl: int = 3600,
     ) -> None:
-        self.database_user: User = database_user
+        self.user: User = user
         self.bucket_name = bucket_name
         self.s3_client = s3_client
         self.redis_connection = redis_connection
@@ -43,7 +43,7 @@ class Storage:
 
     # every object for a user lives under users/{user_id}/
     def _key(self, document_name: str) -> str:
-        return f"users/{self.database_user.id}/{document_name}"
+        return f"users/{self.user.id}/{document_name}"
 
     # upload data. cache=False skips redis entirely: use it for mutable keys
     # (like the snapshot manifest) that must always be read fresh from s3
